@@ -24,6 +24,7 @@ public sealed class WorkflowPipeline
 {
     public string Name { get; set; } = "Untitled";
     public List<WorkflowStep> Steps { get; set; } = new();
+    public string DocumentPath { get; set; } = string.Empty;
 }
 
 /// <summary>Descriptor used by the UI step library palette.</summary>

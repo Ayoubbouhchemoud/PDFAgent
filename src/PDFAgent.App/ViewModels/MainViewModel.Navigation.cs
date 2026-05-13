@@ -1,13 +1,18 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 
 namespace PDFAgent.App.ViewModels;
 
-// Navigation, search, zoom and view-toggle commands surfaced to MainWindow.
 public sealed partial class MainViewModel
 {
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDocumentEmpty))]
+    [NotifyCanExecuteChangedFor(nameof(SaveFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OcrCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
     private bool _isDocumentLoaded;
 
     [ObservableProperty]
@@ -16,12 +21,12 @@ public sealed partial class MainViewModel
     [ObservableProperty]
     private string? _searchQuery;
 
+    [ObservableProperty]
+    private string _searchStatus = string.Empty;
+
     public bool IsDocumentEmpty => !IsDocumentLoaded;
 
-    // Fired when the host should open the BatchWorkflow panel/window.
     public event EventHandler? BatchWorkflowRequested;
-
-    // Fired when the host should open the OCR Review panel/window.
     public event EventHandler? OcrReviewRequested;
 
     [RelayCommand]
@@ -64,6 +69,46 @@ public sealed partial class MainViewModel
     {
         IsSearchVisible = false;
         SearchQuery = null;
+        SearchStatus = string.Empty;
+    }
+
+    [RelayCommand]
+    private async Task SearchAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrWhiteSpace(SearchQuery)) return;
+
+        SearchStatus = "Searching…";
+        var query = SearchQuery!;
+        var matchPages = new List<int>();
+
+        try
+        {
+            for (var i = 0; i < TotalPages; i++)
+            {
+                var textResult = await _pdfEngine.ExtractTextAsync(i);
+                if (!textResult.IsSuccess || textResult.Value == null) continue;
+                var fullText = string.Concat(textResult.Value.Select(s => s.Text));
+                if (fullText.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    matchPages.Add(i + 1);
+            }
+
+            if (matchPages.Count > 0)
+            {
+                CurrentPage = matchPages[0];
+                SearchStatus = $"{matchPages.Count} page(s) match";
+                StatusText = $"Search: '{query}' found on {matchPages.Count} page(s) — showing page {matchPages[0]}";
+            }
+            else
+            {
+                SearchStatus = "No matches";
+                StatusText = $"Search: no matches found for '{query}'";
+            }
+        }
+        catch (Exception ex)
+        {
+            SearchStatus = "Search error";
+            _logger.LogError(ex, "Search failed");
+        }
     }
 
     partial void OnDocumentInfoChanged(Core.Models.PdfDocumentInfo? value)

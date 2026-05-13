@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,11 @@ public sealed partial class MainViewModel : ObservableObject
     private double _currentZoom = 1.0;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OcrCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -66,9 +72,11 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (AppArguments.TryGetFilePath(out var filePath) && filePath != null)
             await OpenFileAsync(filePath);
-
-        await Task.CompletedTask;
     }
+
+    private bool DocumentReady() => IsDocumentLoaded && !IsBusy;
+
+    // ── File ────────────────────────────────────────────────────────────────
 
     [RelayCommand]
     private async Task OpenFileAsync(string? filePath = null)
@@ -77,8 +85,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (string.IsNullOrEmpty(filePath)) return;
 
         IsBusy = true;
-        StatusText = $"Opening {Path.GetFileName(filePath)}...";
-
+        StatusText = $"Opening {Path.GetFileName(filePath)}…";
         try
         {
             if (_pdfEngine.IsOpen)
@@ -110,24 +117,180 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task SaveFileAsync()
     {
-        if (!_pdfEngine.IsOpen) return;
         var path = _fileDialog.SavePdf(DocumentInfo?.FileName ?? "output.pdf");
         if (path == null) return;
 
         IsBusy = true;
         try
         {
-            File.Copy(_pdfEngine.FilePath, path, overwrite: true);
+            await Task.Run(() => File.Copy(_pdfEngine.FilePath, path, overwrite: true));
             StatusText = $"Saved to {Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Save failed: {ex.Message}";
         }
         finally
         {
             IsBusy = false;
         }
     }
+
+    // ── Edit ────────────────────────────────────────────────────────────────
+
+    [RelayCommand]
+    private async Task MergeAsync()
+    {
+        var files = _fileDialog.OpenMultiplePdfs();
+        if (files.Count < 2) return;
+
+        var output = _fileDialog.SavePdf("merged.pdf");
+        if (output == null) return;
+
+        IsBusy = true;
+        StatusText = "Merging PDFs…";
+        try
+        {
+            var result = await _pdfEditor.MergeAsync(files, output);
+            StatusText = result.IsSuccess ? $"Merge complete — {result.Message}" : $"Merge failed: {result.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task SplitAsync()
+    {
+        var dir = _fileDialog.SelectFolder();
+        if (dir == null) return;
+
+        IsBusy = true;
+        StatusText = "Splitting…";
+        try
+        {
+            var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, dir, SplitMode.SplitAll);
+            StatusText = result.IsSuccess ? $"Split complete — {result.Message}" : $"Split failed: {result.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task RotateAsync()
+    {
+        IsBusy = true;
+        StatusText = "Rotating pages…";
+        try
+        {
+            var pages = Enumerable.Range(0, TotalPages).ToList();
+            var result = await _pdfEditor.RotatePagesAsync(_pdfEngine.FilePath, pages, 90);
+            StatusText = result.IsSuccess ? $"Rotation complete — {result.Message}" : $"Rotation failed: {result.Message}";
+
+            if (result.IsSuccess)
+            {
+                // Re-open to reflect rotation in viewer
+                var path = _pdfEngine.FilePath;
+                await _pdfEngine.CloseAsync();
+                var reopen = await _pdfEngine.OpenAsync(path);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    await LoadThumbnailsAsync();
+                    await RenderCurrentPagesAsync();
+                }
+            }
+        }
+        finally { IsBusy = false; }
+    }
+
+    // ── Tools ───────────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task OcrAsync()
+    {
+        IsBusy = true;
+        StatusText = "Running OCR…";
+        try
+        {
+            var sb = new StringBuilder();
+            for (var i = 0; i < TotalPages; i++)
+            {
+                StatusText = $"OCR: processing page {i + 1} of {TotalPages}…";
+                var renderResult = await _pdfEngine.RenderPageAsync(i, dpi: 300);
+                if (!renderResult.IsSuccess || renderResult.Value == null) continue;
+
+                var ocrResult = await _ocrEngine.ProcessPageAsync(renderResult.Value);
+                if (ocrResult.IsSuccess && ocrResult.Value != null)
+                {
+                    sb.AppendLine($"=== Page {i + 1} ===");
+                    sb.AppendLine(ocrResult.Value.FullText);
+                    sb.AppendLine();
+                    _logger.LogInformation("OCR p{Page}: {Chars} chars, {Conf:P0} confidence",
+                        i + 1, ocrResult.Value.FullText.Length, ocrResult.Value.Confidence / 100.0);
+                }
+            }
+
+            var outputPath = _fileDialog.SaveTextFile(
+                Path.GetFileNameWithoutExtension(DocumentInfo!.FileName) + "_ocr.txt");
+            if (outputPath != null)
+            {
+                await File.WriteAllTextAsync(outputPath, sb.ToString());
+                StatusText = $"OCR complete — saved to {Path.GetFileName(outputPath)}";
+            }
+            else
+            {
+                StatusText = "OCR complete (not saved)";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "OCR failed");
+            StatusText = $"OCR error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task RedactAsync()
+    {
+        var output = _fileDialog.SavePdf(
+            Path.GetFileNameWithoutExtension(DocumentInfo!.FileName) + "_redacted.pdf");
+        if (output == null) return;
+
+        IsBusy = true;
+        StatusText = "Redacting PII…";
+        try
+        {
+            var result = await _redactionEngine.RedactPiiAsync(
+                _pdfEngine.FilePath, output, new PiiRedactionProfile
+                {
+                    RedactEmails = true,
+                    RedactPhoneNumbers = true,
+                    RedactSsn = true,
+                    RedactCreditCards = true,
+                });
+            StatusText = result.IsSuccess
+                ? $"Redaction complete — {result.Message}"
+                : $"Redaction failed: {result.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand]
+    private async Task SignAsync()
+    {
+        StatusText = "Digital signing requires a certificate (.pfx). Feature coming soon.";
+        await Task.CompletedTask;
+    }
+
+    [RelayCommand]
+    private void Annotate() => StatusText = "Annotation mode — coming soon";
+
+    [RelayCommand]
+    private void EditText() => StatusText = "Text editing mode — coming soon";
+
+    // ── Rendering ───────────────────────────────────────────────────────────
 
     private async Task LoadThumbnailsAsync()
     {
@@ -156,137 +319,6 @@ public sealed partial class MainViewModel : ObservableObject
                 ImageData = result.Value ?? Array.Empty<byte>(),
             });
         }
-    }
-
-    [RelayCommand]
-    private async Task MergeAsync()
-    {
-        var files = _fileDialog.OpenMultiplePdfs();
-        if (files.Count < 2) return;
-
-        var output = _fileDialog.SavePdf("merged.pdf");
-        if (output == null) return;
-
-        IsBusy = true;
-        StatusText = "Merging PDFs...";
-        try
-        {
-            var result = await _pdfEditor.MergeAsync(files, output);
-            StatusText = result.IsSuccess ? "Merge complete" : $"Merge failed: {result.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task SplitAsync()
-    {
-        if (!_pdfEngine.IsOpen) return;
-        var dir = _fileDialog.SelectFolder();
-        if (dir == null) return;
-
-        IsBusy = true;
-        StatusText = "Splitting...";
-        try
-        {
-            var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, dir, SplitMode.SplitAll);
-            StatusText = result.IsSuccess ? "Split complete" : $"Split failed: {result.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RotateAsync()
-    {
-        if (!_pdfEngine.IsOpen) return;
-        IsBusy = true;
-        try
-        {
-            var result = await _pdfEditor.RotatePagesAsync(_pdfEngine.FilePath,
-                Enumerable.Range(0, TotalPages).ToList(), 90);
-            StatusText = result.IsSuccess ? "Rotation complete" : $"Rotation failed: {result.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task OcrAsync()
-    {
-        if (!_pdfEngine.IsOpen) return;
-
-        IsBusy = true;
-        StatusText = "Running OCR...";
-        try
-        {
-            for (var i = 0; i < TotalPages; i++)
-            {
-                var renderResult = await _pdfEngine.RenderPageAsync(i, dpi: 300);
-                if (!renderResult.IsSuccess || renderResult.Value == null) continue;
-
-                var ocrResult = await _ocrEngine.ProcessPageAsync(renderResult.Value);
-                if (ocrResult.IsSuccess && ocrResult.Value != null)
-                {
-                    _logger.LogInformation("OCR page {Page}: {TextLength} chars, {Confidence:P} confidence",
-                        i + 1, ocrResult.Value.FullText.Length, ocrResult.Value.Confidence / 100.0);
-                }
-            }
-
-            StatusText = "OCR complete";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RedactAsync()
-    {
-        if (!_pdfEngine.IsOpen) return;
-        var output = _fileDialog.SavePdf("redacted_output.pdf");
-        if (output == null) return;
-
-        IsBusy = true;
-        StatusText = "Redacting...";
-        try
-        {
-            var targets = new List<RedactionTarget>();
-            var result = await _redactionEngine.RedactPiiAsync(
-                _pdfEngine.FilePath, output, new PiiRedactionProfile());
-            StatusText = result.IsSuccess ? "Redaction complete" : $"Redaction failed: {result.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task SignAsync()
-    {
-        // Placeholder: will use X509 certificate
-        StatusText = "Digital signing — requires certificate setup";
-        await Task.CompletedTask;
-    }
-
-    [RelayCommand]
-    private void Annotate()
-    {
-        StatusText = "Annotation mode — coming soon";
-    }
-
-    [RelayCommand]
-    private void EditText()
-    {
-        StatusText = "Text editing mode — coming soon";
     }
 }
 

@@ -66,4 +66,16 @@ public sealed class FileDialogService
         };
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
+
+    public string? SaveTextFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+            Title = "Save OCR Text",
+            FileName = defaultName,
+            DefaultExt = ".txt",
+        };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 }

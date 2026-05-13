@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using PDFAgent.App.Services;
 using PDFAgent.App.ViewModels;
+using PDFAgent.Core.Interfaces;
 using PDFAgent.Core.Models;
 using PDFAgent.Core.Services;
 using Xunit;
@@ -14,7 +15,8 @@ public sealed class BatchWorkflowViewModelTests
     private static BatchWorkflowViewModel CreateVm(IBatchWorkflowService? service = null)
     {
         service ??= Substitute.For<IBatchWorkflowService>();
-        return new BatchWorkflowViewModel(NullLogger<BatchWorkflowViewModel>.Instance, service);
+        var pdfEngine = Substitute.For<IPdfEngine>();
+        return new BatchWorkflowViewModel(NullLogger<BatchWorkflowViewModel>.Instance, service, pdfEngine);
     }
 
     [Fact]

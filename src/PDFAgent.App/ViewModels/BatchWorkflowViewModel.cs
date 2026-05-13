@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using PDFAgent.Core.Interfaces;
 using PDFAgent.Core.Models;
 using PDFAgent.Core.Services;
 
@@ -11,6 +12,7 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
 {
     private readonly ILogger<BatchWorkflowViewModel> _logger;
     private readonly IBatchWorkflowService _workflowService;
+    private readonly IPdfEngine _pdfEngine;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsPipelineEmpty))]
@@ -18,6 +20,7 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
     private ObservableCollection<WorkflowStepViewModel> _steps = new();
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunWorkflowCommand))]
     private bool _isRunning;
 
     [ObservableProperty]
@@ -36,10 +39,12 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
 
     public BatchWorkflowViewModel(
         ILogger<BatchWorkflowViewModel> logger,
-        IBatchWorkflowService workflowService)
+        IBatchWorkflowService workflowService,
+        IPdfEngine pdfEngine)
     {
         _logger = logger;
         _workflowService = workflowService;
+        _pdfEngine = pdfEngine;
     }
 
     [RelayCommand]
@@ -51,11 +56,7 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void AddEmptyStep()
-    {
-        var descriptor = AvailableStepTypes[0];
-        AddStep(descriptor);
-    }
+    private void AddEmptyStep() => AddStep(AvailableStepTypes[0]);
 
     [RelayCommand]
     private void RemoveStep(WorkflowStepViewModel step)
@@ -78,7 +79,10 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
             var progress = new Progress<double>(p =>
             {
                 RunProgress = p * 100;
-                StatusMessage = $"Step {(int)(p * Steps.Count + 1)} of {Steps.Count}…";
+                var stepIdx = (int)(p * Steps.Count);
+                StatusMessage = stepIdx < Steps.Count
+                    ? $"Step {stepIdx + 1}/{Steps.Count}: {Steps[Math.Min(stepIdx, Steps.Count - 1)].DisplayName}…"
+                    : $"Finishing…";
             });
 
             var result = await _workflowService.ExecuteAsync(pipeline, progress, CancellationToken.None);
@@ -110,6 +114,7 @@ public sealed partial class BatchWorkflowViewModel : ObservableObject
     {
         Name = WorkflowName,
         Steps = Steps.Select(s => s.ToModel()).ToList(),
+        DocumentPath = _pdfEngine.IsOpen ? _pdfEngine.FilePath : string.Empty,
     };
 }
 

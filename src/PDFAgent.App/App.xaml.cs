@@ -60,11 +60,12 @@ public partial class App : Application
         var config = AppConfiguration.Load(AppConfiguration.DefaultConfigPath);
         services.AddSingleton(config);
 
-        // Core services
-        services.AddTransient<IPdfEngine, PdfiumEngine>();
-        services.AddTransient<IPdfEditor, PdfiumEditor>();
-        services.AddTransient<IOcrEngine, TesseractOcrEngine>();
-        services.AddTransient<IRedactionEngine, PdfRedactionEngine>();
+        // Core services — all Singleton so every consumer shares the same instance
+        // (IPdfEngine holds document state; others are stateless but share Singleton lifetime)
+        services.AddSingleton<IPdfEngine, PdfiumEngine>();
+        services.AddSingleton<IPdfEditor, PdfiumEditor>();
+        services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
+        services.AddSingleton<IRedactionEngine, PdfRedactionEngine>();
 
         // App services
         services.AddSingleton<FileDialogService>();
