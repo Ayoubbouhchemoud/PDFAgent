@@ -23,4 +23,10 @@
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
   </ItemGroup>
+  <Target Name="CopyPdfiumDll" AfterTargets="Build">
+    <ItemGroup>
+      <PdfiumDll Include="$(OutputPath)x64\pdfium.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PdfiumDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

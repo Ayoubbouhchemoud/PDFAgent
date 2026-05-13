@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="PdfiumViewer" Version="2.13.0" />
+    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="PdfPig" Version="0.1.8" />
     <PackageReference Include="SkiaSharp" Version="2.88.7" />
     <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.7" />
