@@ -121,6 +121,24 @@ public sealed class FileDialogService : IFileDialogService
             MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    public RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages)
+    {
+        var dialog = new Views.RotateOptionsDialog();
+        dialog.CurrentPageNumber = currentPage;
+        if (dialog.ShowDialog() != true) return null;
+
+        return new RotateDialogResult(
+            dialog.PageScope switch
+            {
+                Views.RotatePageScope.All         => RotatePageSelection.All,
+                Views.RotatePageScope.CurrentPage => RotatePageSelection.CurrentPage,
+                Views.RotatePageScope.Range       => RotatePageSelection.Range,
+                _                                 => RotatePageSelection.All,
+            },
+            dialog.PageRangeText,
+            dialog.Degrees);
+    }
+
     public void PrintFile(string filePath)
     {
         try

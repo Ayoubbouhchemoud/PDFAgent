@@ -150,7 +150,16 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task MergeAsync()
     {
         var files = _fileDialog.OpenMultiplePdfs();
-        if (files.Count < 2) return;
+        if (files.Count == 0)
+        {
+            StatusText = "Merge cancelled.";
+            return;
+        }
+        if (files.Count < 2)
+        {
+            StatusText = "Merge requires at least 2 PDF files. Please select 2 or more.";
+            return;
+        }
 
         var output = _fileDialog.SavePdf("merged.pdf");
         if (output == null) return;
@@ -184,18 +193,35 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task RotateAsync()
     {
+        // Ask the user which pages and what angle before doing anything.
+        var opts = _fileDialog.ShowRotateDialog(CurrentPage, TotalPages);
+        if (opts == null) return; // user cancelled
+
+        var pages = opts.PageSelection switch
+        {
+            Services.RotatePageSelection.All         => Enumerable.Range(0, TotalPages).ToList(),
+            Services.RotatePageSelection.CurrentPage => new List<int> { CurrentPage - 1 },
+            Services.RotatePageSelection.Range       =>
+                Services.PageRangeParser.Parse(opts.PageRangeText, TotalPages).ToList(),
+            _ => Enumerable.Range(0, TotalPages).ToList(),
+        };
+
+        if (pages.Count == 0)
+        {
+            StatusText = "Rotate: no valid pages in range — operation cancelled.";
+            return;
+        }
+
         IsBusy = true;
-        StatusText = "Rotating pages…";
-        // Capture path before closing the engine
+        StatusText = $"Rotating {pages.Count} page(s) by {opts.Degrees}°…";
         var path = _pdfEngine.FilePath;
-        var pages = Enumerable.Range(0, TotalPages).ToList();
         try
         {
             // PdfiumViewer holds an exclusive lock on the file.
             // Close it first so PdfSharp can overwrite it, then reopen.
             await _pdfEngine.CloseAsync();
 
-            var result = await _pdfEditor.RotatePagesAsync(path, pages, 90);
+            var result = await _pdfEditor.RotatePagesAsync(path, pages, opts.Degrees);
             StatusText = result.IsSuccess
                 ? $"Rotation complete — {result.Message}"
                 : $"Rotation failed: {result.Message}";

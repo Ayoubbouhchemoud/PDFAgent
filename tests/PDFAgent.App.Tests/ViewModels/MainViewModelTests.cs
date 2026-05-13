@@ -192,7 +192,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task Merge_WhenFewerThanTwoFilesSelected_DoesNotCallEditor()
+    public async Task Merge_WhenOneFileSelected_SetsRequiresMoreFilesStatus()
     {
         var (vm, _, editor, dialog) = CreateDocumentLoadedVm();
         dialog.OpenMultiplePdfs().Returns(new[] { "C:\\only_one.pdf" });
@@ -201,6 +201,20 @@ public sealed class MainViewModelTests
 
         await editor.DidNotReceive().MergeAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        vm.StatusText.Should().Contain("at least 2");
+    }
+
+    [Fact]
+    public async Task Merge_WhenNoFilesSelected_SetsCancelledStatus()
+    {
+        var (vm, _, editor, dialog) = CreateDocumentLoadedVm();
+        dialog.OpenMultiplePdfs().Returns(Array.Empty<string>());
+
+        await vm.MergeCommand.ExecuteAsync(null);
+
+        await editor.DidNotReceive().MergeAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        vm.StatusText.Should().Contain("cancelled");
     }
 
     // ── Split ─────────────────────────────────────────────────────────────────
@@ -329,6 +343,140 @@ public sealed class MainViewModelTests
 
     // ── Rotate ───────────────────────────────────────────────────────────────
 
+    private static RotateDialogResult AllPages90() =>
+        new(RotatePageSelection.All, string.Empty, 90);
+
+    private static void SetupRotateEngineForReopen(
+        IPdfEngine engine, IPdfEditor editor, string filePath = "C:\\doc.pdf")
+    {
+        engine.OpenAsync(filePath, Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  var info = new PdfDocumentInfo { FilePath = ci.Arg<string>(), PageCount = 3 };
+                  return Task.FromResult(OperationResult.Ok(info));
+              });
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(Task.FromResult(OperationResult.Ok("Rotated pages")));
+    }
+
+    [Fact]
+    public async Task Rotate_WhenDialogCancelled_DoesNotCloseEngineOrRotate()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>()).Returns((RotateDialogResult?)null);
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        await engine.DidNotReceive().CloseAsync();
+        await editor.DidNotReceive().RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>());
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rotate_AllPages_PassesAllPageIndicesToEditor()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>()).Returns(AllPages90());
+
+        IReadOnlyList<int>? capturedPages = null;
+        engine.When(e => e.CloseAsync()).Do(_ => { });
+        SetupRotateEngineForReopen(engine, editor);
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  capturedPages = ci.Arg<IReadOnlyList<int>>();
+                  return Task.FromResult(OperationResult.Ok("Rotated 3 pages by 90°"));
+              });
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        capturedPages.Should().NotBeNull();
+        capturedPages!.Should().BeEquivalentTo(new[] { 0, 1, 2 },
+            "TotalPages=3, so all-pages is [0,1,2]");
+        vm.StatusText.Should().Contain("Rotation complete");
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rotate_CurrentPageOnly_PassesOnlyCurrentPageIndex()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        // CurrentPage is 2 (1-based), so 0-based index = 1
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>())
+              .Returns(new RotateDialogResult(RotatePageSelection.CurrentPage, string.Empty, 90));
+
+        IReadOnlyList<int>? capturedPages = null;
+        engine.When(e => e.CloseAsync()).Do(_ => { });
+        SetupRotateEngineForReopen(engine, editor);
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  capturedPages = ci.Arg<IReadOnlyList<int>>();
+                  return Task.FromResult(OperationResult.Ok("Rotated 1 page"));
+              });
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        capturedPages.Should().BeEquivalentTo(new[] { 1 },
+            "CurrentPage=2 → 0-based index 1");
+    }
+
+    [Fact]
+    public async Task Rotate_PageRange_ParsesRangeAndPassesCorrectIndices()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>())
+              .Returns(new RotateDialogResult(RotatePageSelection.Range, "1,3", 180));
+
+        IReadOnlyList<int>? capturedPages = null;
+        int capturedDegrees = 0;
+        engine.When(e => e.CloseAsync()).Do(_ => { });
+        SetupRotateEngineForReopen(engine, editor);
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  capturedPages = ci.Arg<IReadOnlyList<int>>();
+                  capturedDegrees = ci.ArgAt<int>(2);
+                  return Task.FromResult(OperationResult.Ok("Rotated 2 pages by 180°"));
+              });
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        capturedPages.Should().BeEquivalentTo(new[] { 0, 2 },
+            "range '1,3' → 0-based [0, 2]");
+        capturedDegrees.Should().Be(180);
+    }
+
+    [Fact]
+    public async Task Rotate_EmptyPageRange_AbortsWith_NoValidPages_Status()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>())
+              .Returns(new RotateDialogResult(RotatePageSelection.Range, "abc", 90));
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        vm.StatusText.Should().Contain("no valid pages");
+        await editor.DidNotReceive().RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>());
+        vm.IsBusy.Should().BeFalse();
+    }
+
     [Fact]
     public async Task Rotate_ClosesEngineBefore_RotatePagesAsync()
     {
@@ -337,7 +485,8 @@ public sealed class MainViewModelTests
         // UnauthorizedAccessException (confirmed in log 2026-05-13 17:51:32).
         var callOrder = new List<string>();
 
-        var (vm, engine, editor, _) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>()).Returns(AllPages90());
 
         engine.When(e => e.CloseAsync())
               .Do(_ => callOrder.Add("close"));
@@ -372,7 +521,8 @@ public sealed class MainViewModelTests
     [Fact]
     public async Task Rotate_ReopensFileEvenWhenRotationFails()
     {
-        var (vm, engine, editor, _) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.ShowRotateDialog(Arg.Any<int>(), Arg.Any<int>()).Returns(AllPages90());
         var reopened = false;
 
         engine.OpenAsync("C:\\doc.pdf", Arg.Any<string?>(), Arg.Any<CancellationToken>())

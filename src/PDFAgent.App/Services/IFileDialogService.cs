@@ -14,4 +14,18 @@ public interface IFileDialogService
     string? SaveImageFile(string defaultName);
     void ShowProperties(PdfDocumentInfo info);
     void PrintFile(string filePath);
+
+    /// <summary>
+    /// Shows the Rotate Options dialog.
+    /// Returns the user's choices, or null if the dialog was cancelled.
+    /// </summary>
+    RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages);
 }
+
+/// <summary>Result returned by the Rotate Options dialog.</summary>
+public sealed record RotateDialogResult(
+    RotatePageSelection PageSelection,
+    string PageRangeText,
+    int Degrees);
+
+public enum RotatePageSelection { All, CurrentPage, Range }
