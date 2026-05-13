@@ -1,0 +1,29 @@
+# Build outputs
+bin/
+obj/
+build/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# NuGet
+*.nupkg
+packages/
+
+# Test results
+TestResults/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local config / secrets
+appsettings.Local.json

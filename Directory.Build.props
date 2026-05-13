@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+</Project>

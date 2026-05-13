@@ -1,0 +1,142 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===== Font Families ===== -->
+    <!-- Playfair Display for headings — falls back to Georgia if not installed -->
+    <FontFamily x:Key="HeadingFont">pack://application:,,,/Fonts/#Playfair Display, Georgia, serif</FontFamily>
+    <!-- Inter for body — falls back to Segoe UI -->
+    <FontFamily x:Key="BodyFont">pack://application:,,,/Fonts/#Inter, Segoe UI, sans-serif</FontFamily>
+
+    <!-- ===== Heading Styles ===== -->
+    <Style x:Key="DisplayLarge" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="57" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="64" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="DisplayMedium" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="45" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="52" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="DisplaySmall" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="36" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="44" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="HeadlineLarge" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="32" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="40" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="HeadlineMedium" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="28" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="36" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="HeadlineSmall" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource HeadingFont}" />
+        <Setter Property="FontSize"     Value="24" />
+        <Setter Property="FontWeight"   Value="Regular" />
+        <Setter Property="LineHeight"   Value="32" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <!-- ===== Title Styles ===== -->
+    <Style x:Key="TitleLarge" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="22" />
+        <Setter Property="FontWeight"   Value="Normal" />
+        <Setter Property="LineHeight"   Value="28" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="TitleMedium" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="16" />
+        <Setter Property="FontWeight"   Value="Medium" />
+        <Setter Property="LineHeight"   Value="24" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="TitleSmall" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="14" />
+        <Setter Property="FontWeight"   Value="Medium" />
+        <Setter Property="LineHeight"   Value="20" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <!-- ===== Body Styles ===== -->
+    <Style x:Key="BodyLarge" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="16" />
+        <Setter Property="FontWeight"   Value="Normal" />
+        <Setter Property="LineHeight"   Value="24" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="BodyMedium" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="14" />
+        <Setter Property="FontWeight"   Value="Normal" />
+        <Setter Property="LineHeight"   Value="20" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="BodySmall" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="12" />
+        <Setter Property="FontWeight"   Value="Normal" />
+        <Setter Property="LineHeight"   Value="16" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <!-- ===== Label Styles ===== -->
+    <Style x:Key="LabelLarge" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="14" />
+        <Setter Property="FontWeight"   Value="Medium" />
+        <Setter Property="LineHeight"   Value="20" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="LabelMedium" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="12" />
+        <Setter Property="FontWeight"   Value="Medium" />
+        <Setter Property="LineHeight"   Value="16" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <Style x:Key="LabelSmall" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="11" />
+        <Setter Property="FontWeight"   Value="Medium" />
+        <Setter Property="LineHeight"   Value="16" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceBrush}" />
+    </Style>
+
+    <!-- ===== Section header (used in panels) ===== -->
+    <Style x:Key="SectionHeaderText" TargetType="TextBlock">
+        <Setter Property="FontFamily"   Value="{StaticResource BodyFont}" />
+        <Setter Property="FontSize"     Value="11" />
+        <Setter Property="FontWeight"   Value="SemiBold" />
+        <Setter Property="Foreground"   Value="{DynamicResource OnSurfaceVariantBrush}" />
+    </Style>
+
+</ResourceDictionary>

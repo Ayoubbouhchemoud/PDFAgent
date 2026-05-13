@@ -1,0 +1,129 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main, develop, feature/**]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  SOLUTION: PDF-Agent.sln
+  BUILD_PLATFORM: 'x64'
+  CONFIGURATION: 'Release'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION }}
+
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} --no-restore -p:Platform=${{ env.BUILD_PLATFORM }}
+
+      - name: Test
+        run: dotnet test ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: '**/TestResults/**'
+
+      - name: Publish
+        run: |
+          dotnet publish src/PDFAgent.App/PDFAgent.App.csproj `
+            --configuration ${{ env.CONFIGURATION }} `
+            --runtime win-x64 `
+            --self-contained true `
+            --output publish/app
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFAgent-build
+          path: publish/
+
+  code-quality:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore
+        run: dotnet restore ${{ env.SOLUTION }}
+      - name: Run Roslyn analyzers
+        run: |
+          dotnet build ${{ env.SOLUTION }} `
+            --configuration Release `
+            -warnaserror `
+            -p:RunAnalyzersDuringBuild=true
+
+  security-scan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore
+        run: dotnet restore ${{ env.SOLUTION }}
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION }} --configuration Release
+      - name: Run security audit
+        run: |
+          dotnet list ${{ env.SOLUTION }} package --vulnerable --include-transitive
+
+  package-msix:
+    runs-on: windows-latest
+    needs: [build, code-quality, security-scan]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MSIX tools
+        run: |
+          dotnet tool install --global Microsoft.Windows.Apps.Packager
+      - name: Restore
+        run: dotnet restore ${{ env.SOLUTION }}
+      - name: Build with MSIX
+        run: |
+          dotnet publish src/PDFAgent.App/PDFAgent.App.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            -p:AppxPackage=true `
+            -p:AppxManifestFile=build/PDFAgent.manifest.xml `
+            -p:WindowsPackageType=MSIX `
+            --output publish/msix
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFAgent-MSIX
+          path: publish/msix/*.msix
+
+  release-drafter:
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

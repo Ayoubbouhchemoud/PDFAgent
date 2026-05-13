@@ -1,0 +1,252 @@
+<UserControl x:Class="PDFAgent.App.Views.BatchWorkflowView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:PDFAgent.App.Converters"
+             Background="{DynamicResource SurfaceBrush}"
+             FontFamily="{DynamicResource BodyFont}">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="60" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="56" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ── Header (spans both columns) ── -->
+        <Border Grid.Row="0" Grid.ColumnSpan="2"
+                Background="{DynamicResource SurfaceContainerLowBrush}"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="20,0">
+            <DockPanel VerticalAlignment="Center">
+                <TextBlock DockPanel.Dock="Left"
+                           Text="Batch Workflow Editor"
+                           FontFamily="{DynamicResource HeadingFont}"
+                           FontSize="22"
+                           Foreground="{DynamicResource PrimaryBrush}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Style="{StaticResource OutlinedButton}"
+                            Command="{Binding SaveWorkflowCommand}"
+                            Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSaveFile}" Margin="0,0,6,0" />
+                            <TextBlock Text="Save" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource FilledButton}"
+                            Command="{Binding RunWorkflowCommand}"
+                            IsEnabled="{Binding CanRun}">
+                        <StackPanel Orientation="Horizontal">
+                            <Path Style="{StaticResource IconPathOnPrimary}" Data="{StaticResource IconPlay}" Margin="0,0,6,0" />
+                            <TextBlock Text="Run Workflow" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ── Step Library (left column) ── -->
+        <Border Grid.Row="1" Grid.Column="0"
+                Background="{DynamicResource SidebarBackgroundBrush}"
+                BorderBrush="{DynamicResource SidebarBorderBrush}"
+                BorderThickness="0,0,1,0">
+            <StackPanel Margin="16,12">
+                <TextBlock Text="AVAILABLE STEPS" Style="{StaticResource SectionHeader}" />
+                <TextBlock Text="Drag a step into the pipeline"
+                           Style="{StaticResource BodySmall}"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,0,12" />
+
+                <!-- Step palette cards -->
+                <ItemsControl ItemsSource="{Binding AvailableStepTypes}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource WorkflowStepCard}"
+                                    Cursor="Hand">
+                                <Border.InputBindings>
+                                    <MouseBinding MouseAction="LeftDoubleClick"
+                                                  Command="{Binding DataContext.AddStepCommand,
+                                                            RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                  CommandParameter="{Binding}" />
+                                </Border.InputBindings>
+                                <DockPanel>
+                                    <Path DockPanel.Dock="Left"
+                                          Style="{StaticResource IconPathPrimary}"
+                                          Data="{Binding IconData}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,10,0" />
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   Style="{StaticResource LabelLarge}" />
+                                        <TextBlock Text="{Binding Description}"
+                                                   Style="{StaticResource BodySmall}"
+                                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Pipeline canvas (right column) ── -->
+        <Grid Grid.Row="1" Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Pipeline header -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource SurfaceContainerLowBrush}"
+                    BorderBrush="{DynamicResource OutlineVariantBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="20,10">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="Pipeline Steps"
+                               Style="{StaticResource TitleSmall}" />
+                    <TextBlock DockPanel.Dock="Right"
+                               Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                               FontSize="12">
+                        <Run Text="{Binding Steps.Count}" FontWeight="SemiBold" />
+                        <Run Text=" steps" />
+                    </TextBlock>
+                </DockPanel>
+            </Border>
+
+            <!-- Step list -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,12">
+                <StackPanel>
+                    <!-- Empty state -->
+                    <StackPanel HorizontalAlignment="Center" Margin="0,40"
+                                Visibility="{Binding IsPipelineEmpty, Converter={StaticResource BoolToVis}}">
+                        <Path Style="{StaticResource IconPath}"
+                              Data="{StaticResource IconBatch}"
+                              Width="40" Height="40"
+                              Stroke="{DynamicResource OutlineBrush}"
+                              HorizontalAlignment="Center" />
+                        <TextBlock Text="No steps yet"
+                                   Style="{StaticResource TitleSmall}"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,12,0,4" />
+                        <TextBlock Text="Double-click a step from the library to add it"
+                                   Style="{StaticResource BodySmall}"
+                                   Foreground="{DynamicResource OutlineBrush}"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Step cards -->
+                    <ItemsControl ItemsSource="{Binding Steps}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource WorkflowStepCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="36" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Drag handle -->
+                                        <Path Grid.Column="0"
+                                              Style="{StaticResource IconPath}"
+                                              Data="{StaticResource IconDragHandle}"
+                                              Width="12" Height="20"
+                                              Stroke="{DynamicResource OutlineBrush}"
+                                              Cursor="SizeAll" />
+
+                                        <!-- Step icon -->
+                                        <Border Grid.Column="1"
+                                                Background="{DynamicResource PrimaryContainerBrush}"
+                                                CornerRadius="6" Width="32" Height="32"
+                                                VerticalAlignment="Center">
+                                            <Path Style="{StaticResource IconPathPrimary}"
+                                                  Data="{Binding IconData}"
+                                                  Width="14" Height="14" />
+                                        </Border>
+
+                                        <!-- Step detail -->
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="10,0">
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       Style="{StaticResource LabelLarge}" />
+                                            <TextBlock Text="{Binding Summary}"
+                                                       Style="{StaticResource BodySmall}"
+                                                       Foreground="{DynamicResource OnSurfaceVariantBrush}" />
+                                        </StackPanel>
+
+                                        <!-- Remove -->
+                                        <Button Grid.Column="3"
+                                                Style="{StaticResource IconButton}"
+                                                Command="{Binding DataContext.RemoveStepCommand,
+                                                          RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip="Remove step">
+                                            <Path Style="{StaticResource IconPath}"
+                                                  Data="{StaticResource IconClose}"
+                                                  Stroke="{DynamicResource ErrorBrush}"
+                                                  Width="12" Height="12" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Add step inline -->
+                    <Button Style="{StaticResource OutlinedButton}"
+                            Command="{Binding AddEmptyStepCommand}"
+                            HorizontalAlignment="Center"
+                            Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Path Style="{StaticResource IconPath}"
+                                  Data="{StaticResource IconAdd}"
+                                  Stroke="{DynamicResource PrimaryBrush}"
+                                  Margin="0,0,6,0" />
+                            <TextBlock Text="Add Step" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ── Progress bar during run ── -->
+        <ProgressBar Grid.Row="2" Grid.ColumnSpan="2"
+                     Style="{StaticResource LinearProgress}"
+                     Value="{Binding RunProgress}"
+                     Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}"
+                     VerticalAlignment="Top" />
+
+        <!-- ── Footer ── -->
+        <Border Grid.Row="2" Grid.ColumnSpan="2"
+                Background="{DynamicResource SurfaceContainerLowBrush}"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="20,0">
+            <DockPanel VerticalAlignment="Center">
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding StatusMessage}"
+                           Style="{StaticResource BodySmall}"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock DockPanel.Dock="Right"
+                           Text="{Binding RunProgress, StringFormat='{}{0}%'}"
+                           Style="{StaticResource LabelMedium}"
+                           Foreground="{DynamicResource PrimaryBrush}"
+                           Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>
