@@ -114,6 +114,184 @@ public sealed class MainViewModelTests
         vm.ExportToImageCommand.CanExecute(null).Should().BeTrue();
     }
 
+    // ── Save ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Save_CopiesSourceFileToChosenDestination()
+    {
+        // Proves: File.Copy actually runs and produces a real output file.
+        // Save uses File.Copy (read-only on source) so it works even when
+        // PdfiumViewer holds the file open.
+        var src = Path.GetTempFileName();
+        var dst = Path.GetTempFileName();
+        await File.WriteAllBytesAsync(src, new byte[] { 0x25, 0x50, 0x44, 0x46 }); // %PDF
+
+        try
+        {
+            var engine = Substitute.For<IPdfEngine>();
+            var dialog = Substitute.For<IFileDialogService>();
+            var info = new PdfDocumentInfo { FilePath = src, PageCount = 1 };
+            engine.FilePath.Returns(src);
+            engine.DocumentInfo.Returns(info);
+            dialog.SavePdf(Arg.Any<string>()).Returns(dst);
+
+            var vm = new MainViewModel(
+                NullLogger<MainViewModel>.Instance,
+                engine, Substitute.For<IPdfEditor>(),
+                Substitute.For<IOcrEngine>(), Substitute.For<IRedactionEngine>(), dialog);
+            vm.IsDocumentLoaded = true;
+            vm.DocumentInfo = info;
+
+            await vm.SaveFileCommand.ExecuteAsync(null);
+
+            File.Exists(dst).Should().BeTrue("destination file must exist after save");
+            File.ReadAllBytes(dst).Should().BeEquivalentTo(File.ReadAllBytes(src));
+            vm.StatusText.Should().StartWith("Saved to");
+            vm.IsBusy.Should().BeFalse();
+        }
+        finally
+        {
+            if (File.Exists(src)) File.Delete(src);
+            if (File.Exists(dst)) File.Delete(dst);
+        }
+    }
+
+    [Fact]
+    public async Task Save_WhenDialogCancelled_DoesNotCopyFile()
+    {
+        var (vm, _, _, dialog) = CreateDocumentLoadedVm();
+        dialog.SavePdf(Arg.Any<string>()).Returns((string?)null);
+
+        await vm.SaveFileCommand.ExecuteAsync(null);
+
+        // Status should be unchanged (still "Ready" from initial value)
+        vm.StatusText.Should().Be("Ready");
+    }
+
+    // ── Merge ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Merge_CallsEditorWithAllSelectedFiles()
+    {
+        var (vm, _, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var inputFiles = new[] { "C:\\a.pdf", "C:\\b.pdf" };
+        dialog.OpenMultiplePdfs().Returns(inputFiles);
+        dialog.SavePdf(Arg.Any<string>()).Returns("C:\\merged.pdf");
+        editor.MergeAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok("Merged 2 files"));
+
+        await vm.MergeCommand.ExecuteAsync(null);
+
+        await editor.Received(1).MergeAsync(
+            Arg.Is<IReadOnlyList<string>>(l => l.SequenceEqual(inputFiles)),
+            "C:\\merged.pdf",
+            Arg.Any<CancellationToken>());
+        vm.StatusText.Should().Contain("complete");
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Merge_WhenFewerThanTwoFilesSelected_DoesNotCallEditor()
+    {
+        var (vm, _, editor, dialog) = CreateDocumentLoadedVm();
+        dialog.OpenMultiplePdfs().Returns(new[] { "C:\\only_one.pdf" });
+
+        await vm.MergeCommand.ExecuteAsync(null);
+
+        await editor.DidNotReceive().MergeAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── Split ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Split_CallsEditorWithDocumentPathAndChosenFolder()
+    {
+        var (vm, engine, editor, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        dialog.SelectFolder().Returns("C:\\out");
+        editor.SplitAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SplitMode>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok("Split into 3 pages"));
+
+        await vm.SplitCommand.ExecuteAsync(null);
+
+        await editor.Received(1).SplitAsync(
+            "C:\\doc.pdf", "C:\\out", SplitMode.SplitAll, Arg.Any<CancellationToken>());
+        vm.StatusText.Should().Contain("complete");
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Split_WhenFolderDialogCancelled_DoesNotCallEditor()
+    {
+        var (vm, _, editor, dialog) = CreateDocumentLoadedVm();
+        dialog.SelectFolder().Returns((string?)null);
+
+        await vm.SplitCommand.ExecuteAsync(null);
+
+        await editor.DidNotReceive().SplitAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SplitMode>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── Redact ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Redact_CallsRedactPiiWithAllFourProfileFlagsEnabled()
+    {
+        var (vm, engine, _, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var redaction = Substitute.For<IRedactionEngine>();
+        redaction.RedactPiiAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<PiiRedactionProfile>(), Arg.Any<CancellationToken>())
+                 .Returns(OperationResult.Ok("Redacted 5 region(s)"));
+
+        dialog.SavePdf(Arg.Any<string>()).Returns("C:\\doc_redacted.pdf");
+
+        // Inject a VM with our specific redaction mock
+        var vm2 = new MainViewModel(
+            NullLogger<MainViewModel>.Instance,
+            engine, Substitute.For<IPdfEditor>(),
+            Substitute.For<IOcrEngine>(), redaction, dialog);
+        vm2.IsDocumentLoaded = true;
+        vm2.DocumentInfo = engine.DocumentInfo;
+
+        await vm2.RedactCommand.ExecuteAsync(null);
+
+        await redaction.Received(1).RedactPiiAsync(
+            "C:\\doc.pdf",
+            "C:\\doc_redacted.pdf",
+            Arg.Is<PiiRedactionProfile>(p =>
+                p.RedactEmails &&
+                p.RedactPhoneNumbers &&
+                p.RedactSsn &&
+                p.RedactCreditCards),
+            Arg.Any<CancellationToken>());
+        vm2.StatusText.Should().Contain("complete");
+        vm2.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Redact_WhenDialogCancelled_DoesNotCallEngine()
+    {
+        var (vm, engine, _, dialog) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var redaction = Substitute.For<IRedactionEngine>();
+        dialog.SavePdf(Arg.Any<string>()).Returns((string?)null);
+
+        var vm2 = new MainViewModel(
+            NullLogger<MainViewModel>.Instance,
+            engine, Substitute.For<IPdfEditor>(),
+            Substitute.For<IOcrEngine>(), redaction, dialog);
+        vm2.IsDocumentLoaded = true;
+        vm2.DocumentInfo = engine.DocumentInfo;
+
+        await vm2.RedactCommand.ExecuteAsync(null);
+
+        await redaction.DidNotReceive().RedactPiiAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<PiiRedactionProfile>(), Arg.Any<CancellationToken>());
+    }
+
     // ── OCR ──────────────────────────────────────────────────────────────────
 
     [Fact]
