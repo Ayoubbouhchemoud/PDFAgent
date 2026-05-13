@@ -13,6 +13,7 @@ public interface IPdfEditor
     Task<OperationResult> ReorderPagesAsync(string filePath, IReadOnlyList<int> newOrder, CancellationToken ct = default);
     Task<OperationResult> AddWatermarkAsync(string filePath, string outputPath, string text, CancellationToken ct = default);
     Task<OperationResult> AddStampAsync(string filePath, string outputPath, string stampText, CancellationToken ct = default);
+    Task<OperationResult> AddPageAnnotationAsync(string filePath, string outputPath, int pageNumber, string text, CancellationToken ct = default);
 }
 
 public enum SplitMode

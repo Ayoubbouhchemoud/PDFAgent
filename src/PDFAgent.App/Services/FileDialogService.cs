@@ -1,8 +1,11 @@
+using System.Diagnostics;
+using System.Windows;
 using Microsoft.Win32;
+using PDFAgent.Core.Models;
 
 namespace PDFAgent.App.Services;
 
-public sealed class FileDialogService
+public sealed class FileDialogService : IFileDialogService
 {
     public string? OpenPdf()
     {
@@ -77,5 +80,63 @@ public sealed class FileDialogService
             DefaultExt = ".txt",
         };
         return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    public string? SaveImageFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PNG image (*.png)|*.png|JPEG image (*.jpg)|*.jpg|All files (*.*)|*.*",
+            Title = "Export Page as Image",
+            FileName = defaultName,
+            DefaultExt = ".png",
+        };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    public void ShowProperties(PdfDocumentInfo info)
+    {
+        var created = info.CreatedOn.HasValue
+            ? info.CreatedOn.Value.ToString("yyyy-MM-dd HH:mm")
+            : "—";
+        var modified = info.ModifiedOn.HasValue
+            ? info.ModifiedOn.Value.ToString("yyyy-MM-dd HH:mm")
+            : "—";
+
+        var msg =
+            $"File: {info.FileName}\n" +
+            $"Size: {info.FileSizeKB:N1} KB ({info.FileSizeMB:N2} MB)\n" +
+            $"Pages: {info.PageCount}\n" +
+            $"PDF version: {info.PdfVersion ?? "—"}\n\n" +
+            $"Title: {info.Title ?? "—"}\n" +
+            $"Author: {info.Author ?? "—"}\n" +
+            $"Subject: {info.Subject ?? "—"}\n" +
+            $"Producer: {info.Producer ?? "—"}\n\n" +
+            $"Created: {created}\n" +
+            $"Modified: {modified}\n" +
+            $"Encrypted: {(info.IsEncrypted ? "Yes" : "No")}\n" +
+            $"Has signature: {(info.HasSignature ? "Yes" : "No")}";
+
+        MessageBox.Show(msg, $"Properties — {info.FileName}",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    public void PrintFile(string filePath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = filePath,
+                Verb = "print",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Unable to print the document:\n{ex.Message}\n\nEnsure a default PDF reader is installed.",
+                "Print Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 }

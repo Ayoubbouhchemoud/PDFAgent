@@ -17,7 +17,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IPdfEditor _pdfEditor;
     private readonly IOcrEngine _ocrEngine;
     private readonly IRedactionEngine _redactionEngine;
-    private readonly FileDialogService _fileDialog;
+    private readonly IFileDialogService _fileDialog;
 
     [ObservableProperty]
     private string _statusText = "Ready";
@@ -43,6 +43,11 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
     [NotifyCanExecuteChangedFor(nameof(OcrCommand))]
     [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SignCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AnnotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -58,7 +63,7 @@ public sealed partial class MainViewModel : ObservableObject
         IPdfEditor pdfEditor,
         IOcrEngine ocrEngine,
         IRedactionEngine redactionEngine,
-        FileDialogService fileDialog)
+        IFileDialogService fileDialog)
     {
         _logger = logger;
         _pdfEngine = pdfEngine;
@@ -277,18 +282,105 @@ public sealed partial class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task SignAsync()
     {
-        StatusText = "Digital signing requires a certificate (.pfx). Feature coming soon.";
-        await Task.CompletedTask;
+        var output = _fileDialog.SavePdf(
+            Path.GetFileNameWithoutExtension(DocumentInfo!.FileName) + "_signed.pdf");
+        if (output == null) return;
+
+        IsBusy = true;
+        StatusText = "Applying signature stamp…";
+        try
+        {
+            var signedBy = Environment.UserName;
+            var signedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+            var stampText = $"SIGNED — {signedBy} — {signedAt}";
+
+            var result = await _pdfEditor.AddStampAsync(_pdfEngine.FilePath, output, stampText);
+            StatusText = result.IsSuccess
+                ? $"Signed — saved to {Path.GetFileName(output)}"
+                : $"Signing failed: {result.Message}";
+
+            if (result.IsSuccess)
+                _logger.LogInformation("Document signed by {User} → {Output}", signedBy, output);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Sign failed");
+            StatusText = $"Sign error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
     }
 
-    [RelayCommand]
-    private void Annotate() => StatusText = "Annotation mode — coming soon";
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task AnnotateAsync()
+    {
+        var output = _fileDialog.SavePdf(
+            Path.GetFileNameWithoutExtension(DocumentInfo!.FileName) + "_annotated.pdf");
+        if (output == null) return;
 
-    [RelayCommand]
-    private void EditText() => StatusText = "Text editing mode — coming soon";
+        IsBusy = true;
+        StatusText = "Adding annotation…";
+        try
+        {
+            var annotationText = $"Reviewed — {Environment.UserName} — {DateTime.Now:yyyy-MM-dd}";
+            var result = await _pdfEditor.AddPageAnnotationAsync(
+                _pdfEngine.FilePath, output, CurrentPage, annotationText);
+            StatusText = result.IsSuccess
+                ? $"Annotation added to page {CurrentPage} — saved to {Path.GetFileName(output)}"
+                : $"Annotation failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Annotate failed");
+            StatusText = $"Annotation error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ExportToImageAsync()
+    {
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        var output = _fileDialog.SaveImageFile($"{baseName}_page{CurrentPage}.png");
+        if (output == null) return;
+
+        IsBusy = true;
+        StatusText = $"Exporting page {CurrentPage} as image…";
+        try
+        {
+            var result = await _pdfEngine.RenderPageAsync(CurrentPage - 1, dpi: 150);
+            if (!result.IsSuccess || result.Value == null)
+            {
+                StatusText = $"Export failed: {result.Message}";
+                return;
+            }
+
+            await File.WriteAllBytesAsync(output, result.Value);
+            StatusText = $"Exported page {CurrentPage} → {Path.GetFileName(output)}";
+            _logger.LogInformation("Exported page {Page} as image → {Output}", CurrentPage, output);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ExportToImage failed");
+            StatusText = $"Export error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private void Print()
+    {
+        _fileDialog.PrintFile(_pdfEngine.FilePath);
+        StatusText = $"Print job sent for {DocumentInfo!.FileName}";
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private void Properties()
+    {
+        _fileDialog.ShowProperties(DocumentInfo!);
+    }
 
     // ── Rendering ───────────────────────────────────────────────────────────
 

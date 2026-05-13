@@ -106,7 +106,8 @@
                             <TextBlock Text="Annotate" />
                         </StackPanel>
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding EditTextCommand}" ToolTip="Edit text">
+                    <Button Style="{StaticResource ToolbarButton}" IsEnabled="False"
+                            ToolTip="Text editing is not available in this version">
                         <StackPanel Orientation="Horizontal">
                             <Path Style="{StaticResource IconPath}" Data="{StaticResource IconEditText}" Margin="0,0,4,0" />
                             <TextBlock Text="Edit Text" />
@@ -375,9 +376,12 @@
 
                         <!-- Quick actions -->
                         <TextBlock Text="ACTIONS" Style="{StaticResource SectionHeader}" />
-                        <Button Content="Export to Image" Style="{StaticResource FlatButton}" Margin="0,0,0,6" />
-                        <Button Content="Print"           Style="{StaticResource FlatButton}" Margin="0,0,0,6" />
-                        <Button Content="Properties…"     Style="{StaticResource FlatButton}" Margin="0,0,0,6" />
+                        <Button Content="Export to Image" Style="{StaticResource FlatButton}" Margin="0,0,0,6"
+                                Command="{Binding ExportToImageCommand}" />
+                        <Button Content="Print"           Style="{StaticResource FlatButton}" Margin="0,0,0,6"
+                                Command="{Binding PrintCommand}" />
+                        <Button Content="Properties…"     Style="{StaticResource FlatButton}" Margin="0,0,0,6"
+                                Command="{Binding PropertiesCommand}" />
 
                         <Separator Style="{StaticResource PanelSeparator}" />
 

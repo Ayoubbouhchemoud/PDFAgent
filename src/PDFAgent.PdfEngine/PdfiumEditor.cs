@@ -261,6 +261,53 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    public async Task<OperationResult> AddPageAnnotationAsync(
+        string filePath, string outputPath, int pageNumber, string text, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var input = PdfReader.Open(filePath, PdfDocumentOpenMode.Import);
+                using var output = new PdfDocument();
+                var font = new XFont("Arial", 11, XFontStyleEx.Regular);
+                var labelFont = new XFont("Arial", 9, XFontStyleEx.Bold);
+                var fillBrush = new XSolidBrush(XColor.FromArgb(230, 255, 255, 180));
+                var borderPen = new XPen(XColor.FromArgb(255, 180, 140, 0), 1.2);
+                var textBrush = new XSolidBrush(XColor.FromArgb(255, 60, 40, 0));
+                var targetIdx = Math.Clamp(pageNumber - 1, 0, input.PageCount - 1);
+
+                for (var i = 0; i < input.PageCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var page = output.AddPage(input.Pages[i]);
+                    if (i != targetIdx) continue;
+
+                    using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+                    const double pad = 6;
+                    const double boxW = 220;
+                    const double boxH = 42;
+                    double x = page.Width.Point - boxW - 12;
+                    double y = 12;
+                    gfx.DrawRectangle(fillBrush, x, y, boxW, boxH);
+                    gfx.DrawRectangle(borderPen, x, y, boxW, boxH);
+                    gfx.DrawString("ANNOTATION", labelFont, textBrush, new XPoint(x + pad, y + pad + 9));
+                    var wrapped = text.Length > 40 ? text[..40] + "…" : text;
+                    gfx.DrawString(wrapped, font, textBrush, new XPoint(x + pad, y + pad + 24));
+                }
+
+                output.Save(outputPath);
+                _logger.LogInformation("Annotation added to page {Page} → {Output}", pageNumber, outputPath);
+                return OperationResult.Ok($"Annotation added to page {pageNumber}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AddPageAnnotation failed");
+                return OperationResult.Fail($"Annotation failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
     public async Task<OperationResult> AddStampAsync(
         string filePath, string outputPath, string stampText, CancellationToken ct = default)
     {

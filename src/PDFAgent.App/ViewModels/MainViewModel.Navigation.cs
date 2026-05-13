@@ -13,6 +13,11 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
     [NotifyCanExecuteChangedFor(nameof(OcrCommand))]
     [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SignCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AnnotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
     private bool _isDocumentLoaded;
 
     [ObservableProperty]

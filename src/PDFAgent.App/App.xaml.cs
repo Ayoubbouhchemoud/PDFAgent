@@ -68,7 +68,7 @@ public partial class App : Application
         services.AddSingleton<IRedactionEngine, PdfRedactionEngine>();
 
         // App services
-        services.AddSingleton<FileDialogService>();
+        services.AddSingleton<IFileDialogService, FileDialogService>();
         services.AddSingleton<IBatchWorkflowService, BatchWorkflowService>();
 
         // ViewModels

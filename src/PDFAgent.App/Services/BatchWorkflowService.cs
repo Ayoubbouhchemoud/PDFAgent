@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PDFAgent.Core.Interfaces;
 using PDFAgent.Core.Models;
@@ -14,7 +15,11 @@ public sealed class BatchWorkflowService : IBatchWorkflowService
     private readonly IPdfEngine _pdfEngine;
     private readonly IOcrEngine _ocrEngine;
     private readonly IRedactionEngine _redactionEngine;
-    private readonly List<WorkflowPipeline> _saved = new();
+    private readonly List<WorkflowPipeline> _saved;
+    private static readonly string PipelinesDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PDFAgent", "workflows");
+    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     public BatchWorkflowService(
         ILogger<BatchWorkflowService> logger,
@@ -28,6 +33,7 @@ public sealed class BatchWorkflowService : IBatchWorkflowService
         _pdfEngine = pdfEngine;
         _ocrEngine = ocrEngine;
         _redactionEngine = redactionEngine;
+        _saved = LoadFromDisk();
     }
 
     public async Task<OperationResult> ExecuteAsync(
@@ -69,6 +75,7 @@ public sealed class BatchWorkflowService : IBatchWorkflowService
         var idx = _saved.FindIndex(p => p.Name == name);
         if (idx >= 0) _saved[idx] = pipeline;
         else _saved.Add(pipeline);
+        PersistToDisk(pipeline);
         _logger.LogInformation("Saved pipeline \"{Name}\"", name);
     }
 
@@ -207,5 +214,50 @@ public sealed class BatchWorkflowService : IBatchWorkflowService
         return result.IsSuccess && result.Value != null
             ? Enumerable.Range(0, result.Value.PageCount).ToList()
             : new List<int>();
+    }
+
+    // ── persistence ─────────────────────────────────────────────────────────
+
+    private static string PipelinePath(string name) =>
+        Path.Combine(PipelinesDir, $"{SanitizeName(name)}.json");
+
+    private static string SanitizeName(string name) =>
+        string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+
+    private void PersistToDisk(WorkflowPipeline pipeline)
+    {
+        try
+        {
+            Directory.CreateDirectory(PipelinesDir);
+            var json = JsonSerializer.Serialize(pipeline, JsonOpts);
+            File.WriteAllText(PipelinePath(pipeline.Name), json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist pipeline \"{Name}\" to disk", pipeline.Name);
+        }
+    }
+
+    private List<WorkflowPipeline> LoadFromDisk()
+    {
+        var list = new List<WorkflowPipeline>();
+        if (!Directory.Exists(PipelinesDir)) return list;
+
+        foreach (var file in Directory.EnumerateFiles(PipelinesDir, "*.json"))
+        {
+            try
+            {
+                var json = File.ReadAllText(file);
+                var pipeline = JsonSerializer.Deserialize<WorkflowPipeline>(json, JsonOpts);
+                if (pipeline != null) list.Add(pipeline);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load pipeline from {File}", file);
+            }
+        }
+
+        _logger.LogInformation("Loaded {Count} saved pipelines from disk", list.Count);
+        return list;
     }
 }
