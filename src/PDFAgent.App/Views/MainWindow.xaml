@@ -258,8 +258,17 @@
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
                                   Background="{DynamicResource SurfaceContainerBrush}"
-                                  Padding="0,8">
-                        <ItemsControl ItemsSource="{Binding RenderedPages}" Margin="0,0,0,16">
+                                  Padding="0,8"
+                                  CanContentScroll="True">
+                        <ItemsControl ItemsSource="{Binding RenderedPages}" Margin="0,0,0,16"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling"
+                                      VirtualizingPanel.ScrollUnit="Pixel">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource SurfaceContainerLowestBrush}"
@@ -267,16 +276,45 @@
                                             Effect="{StaticResource PageShadow}"
                                             HorizontalAlignment="Center"
                                             Margin="24,8">
-                                        <Image Source="{Binding ImageData, Converter={StaticResource BytesToImage}}"
-                                               Stretch="None">
-                                            <Image.LayoutTransform>
-                                                <ScaleTransform
-                                                    ScaleX="{Binding DataContext.CurrentZoom,
-                                                             RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                    ScaleY="{Binding DataContext.CurrentZoom,
-                                                             RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
-                                            </Image.LayoutTransform>
-                                        </Image>
+                                        <Grid>
+                                            <!-- Loading placeholder — shown while ImageData is null -->
+                                            <Border Width="595" Height="842"
+                                                    Background="{DynamicResource SurfaceContainerBrush}"
+                                                    CornerRadius="3">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ImageData}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                    <TextBlock Text="{Binding PageNumber, StringFormat='Page {0}'}"
+                                                               FontSize="14"
+                                                               Foreground="{DynamicResource OutlineBrush}"
+                                                               HorizontalAlignment="Center" />
+                                                    <TextBlock Text="Loading…"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource OutlineBrush}"
+                                                               HorizontalAlignment="Center"
+                                                               Margin="0,4,0,0" />
+                                                </StackPanel>
+                                            </Border>
+                                            <!-- Rendered image — shown once ImageData arrives -->
+                                            <Image Source="{Binding ImageData, Converter={StaticResource BytesToImage}}"
+                                                   Stretch="None">
+                                                <Image.LayoutTransform>
+                                                    <ScaleTransform
+                                                        ScaleX="{Binding DataContext.CurrentZoom,
+                                                                 RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                        ScaleY="{Binding DataContext.CurrentZoom,
+                                                                 RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                </Image.LayoutTransform>
+                                            </Image>
+                                        </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

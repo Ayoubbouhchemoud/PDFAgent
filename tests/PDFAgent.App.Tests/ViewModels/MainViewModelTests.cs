@@ -711,4 +711,100 @@ public sealed class MainViewModelTests
 
         dialog.Received(1).ShowProperties(info);
     }
+
+    // ── Progressive rendering ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OpenFile_CreatesPlaceholdersForAllPagesBeforeRenderingStarts()
+    {
+        const string filePath = "C:\\multi.pdf";
+        const int pageCount = 5;
+        var engine = Substitute.For<IPdfEngine>();
+        var dialog = Substitute.For<IFileDialogService>();
+        dialog.OpenPdf().Returns(filePath);
+
+        var info = new PdfDocumentInfo { FilePath = filePath, PageCount = pageCount };
+        engine.OpenAsync(filePath, Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(Task.FromResult(OperationResult.Ok(info)));
+
+        // Block rendering so we can inspect the placeholder state before it fills in.
+        var renderStarted = new TaskCompletionSource<bool>();
+        var renderRelease = new TaskCompletionSource<bool>();
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(async _ =>
+              {
+                  renderStarted.TrySetResult(true);
+                  await renderRelease.Task;
+                  return OperationResult.Ok(Array.Empty<byte>());
+              });
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+
+        var vm = CreateVm(engine, dialog: dialog);
+        var openTask = vm.OpenFileCommand.ExecuteAsync(null);
+
+        // Wait until the first render call starts (meaning placeholders were already created).
+        await renderStarted.Task;
+
+        vm.RenderedPages.Should().HaveCount(pageCount,
+            "all page placeholders must exist before any page finishes rendering");
+        vm.RenderedPages.Should().OnlyContain(p => p.ImageData == null,
+            "no page should have real image data yet");
+
+        // Unblock rendering and let the command finish.
+        renderRelease.SetResult(true);
+        await openTask;
+
+        vm.RenderedPages.Should().HaveCount(pageCount);
+    }
+
+    [Fact]
+    public async Task OpenFile_FillsImageDataProgressively()
+    {
+        const string filePath = "C:\\book.pdf";
+        var engine = Substitute.For<IPdfEngine>();
+        var dialog = Substitute.For<IFileDialogService>();
+        dialog.OpenPdf().Returns(filePath);
+
+        var info = new PdfDocumentInfo { FilePath = filePath, PageCount = 3 };
+        engine.OpenAsync(filePath, Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(Task.FromResult(OperationResult.Ok(info)));
+
+        var fakeBytes = new byte[] { 1, 2, 3 };
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(fakeBytes));
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+
+        var vm = CreateVm(engine, dialog: dialog);
+        await vm.OpenFileCommand.ExecuteAsync(null);
+
+        vm.RenderedPages.Should().HaveCount(3);
+        vm.RenderedPages.Should().OnlyContain(p => p.ImageData != null,
+            "all pages should have image data after rendering completes");
+    }
+
+    [Fact]
+    public async Task OpenFile_IsBusyFalseAndStatusReadyAfterRendering()
+    {
+        const string filePath = "C:\\report.pdf";
+        var engine = Substitute.For<IPdfEngine>();
+        var dialog = Substitute.For<IFileDialogService>();
+        dialog.OpenPdf().Returns(filePath);
+
+        var info = new PdfDocumentInfo { FilePath = filePath, PageCount = 2 };
+        engine.OpenAsync(filePath, Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(Task.FromResult(OperationResult.Ok(info)));
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+
+        var vm = CreateVm(engine, dialog: dialog);
+        await vm.OpenFileCommand.ExecuteAsync(null);
+
+        vm.IsBusy.Should().BeFalse();
+        vm.StatusText.Should().Contain("report.pdf");
+        vm.StatusText.Should().Contain("2 page");
+    }
 }

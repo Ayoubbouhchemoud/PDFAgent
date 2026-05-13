@@ -83,11 +83,23 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ── File ────────────────────────────────────────────────────────────────
 
+    // Cancelled and replaced every time a new document is opened or the engine is closed.
+    private CancellationTokenSource _renderCts = new();
+
     [RelayCommand]
     private async Task OpenFileAsync(string? filePath = null)
     {
+        // Guard: don't interrupt an in-progress operation (e.g. rotate or redact).
+        // IsBusy is true during any async command; a second open would race the engine.
+        if (IsBusy) return;
+
         filePath ??= _fileDialog.OpenPdf();
         if (string.IsNullOrEmpty(filePath)) return;
+
+        // Cancel any background render that is still in flight for the previous document.
+        _renderCts.Cancel();
+        _renderCts = new CancellationTokenSource();
+        var ct = _renderCts.Token;
 
         IsBusy = true;
         StatusText = $"Opening {Path.GetFileName(filePath)}…";
@@ -96,7 +108,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (_pdfEngine.IsOpen)
                 await _pdfEngine.CloseAsync();
 
-            var result = await _pdfEngine.OpenAsync(filePath);
+            var result = await _pdfEngine.OpenAsync(filePath, ct: ct);
             if (!result.IsSuccess || result.Value == null)
             {
                 StatusText = $"Failed: {result.Message}";
@@ -108,9 +120,10 @@ public sealed partial class MainViewModel : ObservableObject
             CurrentPage = 1;
             StatusText = $"Opened {result.Value.FileName} ({result.Value.PageCount} pages)";
 
-            await LoadThumbnailsAsync();
-            await RenderCurrentPagesAsync();
+            await LoadThumbnailsAsync(ct);
+            await RenderCurrentPagesAsync(ct);
         }
+        catch (OperationCanceledException) { /* new document opened, silently abort */ }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to open file");
@@ -215,6 +228,7 @@ public sealed partial class MainViewModel : ObservableObject
         IsBusy = true;
         StatusText = $"Rotating {pages.Count} page(s) by {opts.Degrees}°…";
         var path = _pdfEngine.FilePath;
+        string? failureStatus = null;
         try
         {
             // PdfiumViewer holds an exclusive lock on the file.
@@ -222,27 +236,33 @@ public sealed partial class MainViewModel : ObservableObject
             await _pdfEngine.CloseAsync();
 
             var result = await _pdfEditor.RotatePagesAsync(path, pages, opts.Degrees);
-            StatusText = result.IsSuccess
-                ? $"Rotation complete — {result.Message}"
-                : $"Rotation failed: {result.Message}";
+            if (result.IsSuccess)
+                StatusText = $"Rotation complete — {result.Message}";
+            else
+                failureStatus = StatusText = $"Rotation failed: {result.Message}";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Rotate failed");
-            StatusText = $"Rotate error: {ex.Message}";
+            failureStatus = StatusText = $"Rotate error: {ex.Message}";
         }
         finally
         {
-            // Always reopen so the viewer reflects the (possibly rotated) file
+            // Always reopen so the viewer reflects the (possibly rotated) file.
+            // Create a fresh CTS so any previous stale render token doesn't interfere.
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var reopenCt = _renderCts.Token;
             try
             {
-                var reopen = await _pdfEngine.OpenAsync(path);
+                var reopen = await _pdfEngine.OpenAsync(path, ct: reopenCt);
                 if (reopen.IsSuccess && reopen.Value != null)
                 {
                     DocumentInfo = reopen.Value;
                     TotalPages = reopen.Value.PageCount;
-                    await LoadThumbnailsAsync();
-                    await RenderCurrentPagesAsync();
+                    await LoadThumbnailsAsync(reopenCt);
+                    // Preserve failure status so the user sees the error after rendering finishes.
+                    await RenderCurrentPagesAsync(reopenCt, finalStatus: failureStatus);
                 }
             }
             catch (Exception ex)
@@ -446,45 +466,78 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ── Rendering ───────────────────────────────────────────────────────────
 
-    private async Task LoadThumbnailsAsync()
+    private async Task LoadThumbnailsAsync(CancellationToken ct = default)
     {
         Thumbnails.Clear();
+
+        // Add one placeholder per page first so the strip is populated immediately.
+        for (var i = 0; i < TotalPages; i++)
+            Thumbnails.Add(new ThumbnailItem { PageNumber = i + 1, IsSelected = i == 0 });
+
+        // Render thumbnails one at a time and update each item as it arrives.
         for (var i = 0; i < TotalPages; i++)
         {
-            var result = await _pdfEngine.RenderThumbnailAsync(i);
-            Thumbnails.Add(new ThumbnailItem
+            if (ct.IsCancellationRequested || i >= Thumbnails.Count) return;
+            try
             {
-                PageNumber = i + 1,
-                Thumbnail = result.Value,
-                IsSelected = i == 0,
-            });
+                var result = await _pdfEngine.RenderThumbnailAsync(i, ct: ct);
+                if (!ct.IsCancellationRequested && i < Thumbnails.Count)
+                    Thumbnails[i].Thumbnail = result.Value;
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to render thumbnail for page {Page}", i + 1);
+            }
         }
     }
 
-    private async Task RenderCurrentPagesAsync()
+    private async Task RenderCurrentPagesAsync(CancellationToken ct = default, string? finalStatus = null)
     {
         RenderedPages.Clear();
+
+        // Create all placeholders immediately so the viewer shows document structure at once.
+        for (var i = 0; i < TotalPages; i++)
+            RenderedPages.Add(new RenderedPageItem { PageNumber = i + 1 });
+
+        // Render each page and update the placeholder when it arrives.
         for (var i = 0; i < TotalPages; i++)
         {
-            var result = await _pdfEngine.RenderPageAsync(i, dpi: 150);
-            RenderedPages.Add(new RenderedPageItem
+            if (ct.IsCancellationRequested || i >= RenderedPages.Count) return;
+            try
             {
-                PageNumber = i + 1,
-                ImageData = result.Value ?? Array.Empty<byte>(),
-            });
+                StatusText = $"Rendering page {i + 1} of {TotalPages}…";
+                var result = await _pdfEngine.RenderPageAsync(i, dpi: 150, ct: ct);
+                if (!ct.IsCancellationRequested && i < RenderedPages.Count)
+                    RenderedPages[i].ImageData = result.Value;
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to render page {Page}", i + 1);
+            }
         }
+
+        if (!ct.IsCancellationRequested)
+            StatusText = finalStatus ?? $"{DocumentInfo?.FileName} — {TotalPages} page(s)";
     }
 }
 
-public sealed class ThumbnailItem
+public sealed partial class ThumbnailItem : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
-    public int PageNumber { get; set; }
-    public byte[]? Thumbnail { get; set; }
-    public bool IsSelected { get; set; }
+    public int PageNumber { get; init; }
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private byte[]? _thumbnail;
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private bool _isSelected;
 }
 
-public sealed class RenderedPageItem
+public sealed partial class RenderedPageItem : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
-    public int PageNumber { get; set; }
-    public byte[] ImageData { get; set; } = Array.Empty<byte>();
+    public int PageNumber { get; init; }
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private byte[]? _imageData;
 }
