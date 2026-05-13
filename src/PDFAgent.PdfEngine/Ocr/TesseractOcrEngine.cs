@@ -29,21 +29,38 @@ public sealed class TesseractOcrEngine : IOcrEngine
         {
             _supportedLanguages.Clear();
             var tessdataDir = _dataPath;
-            if (tessdataDir != null && Directory.Exists(tessdataDir))
+
+            if (tessdataDir == null || !Directory.Exists(tessdataDir))
             {
-                foreach (var file in Directory.GetFiles(tessdataDir, "*.traineddata"))
-                {
-                    var lang = Path.GetFileNameWithoutExtension(file);
-                    if (lang != "osd") _supportedLanguages.Add(lang);
-                }
+                _logger.LogWarning(
+                    "Tesseract tessdata directory not found at '{Path}'. OCR unavailable. " +
+                    "Download eng.traineddata from https://github.com/tesseract-ocr/tessdata " +
+                    "and place it in that directory.",
+                    tessdataDir);
+                _initialized = false;
+                return;
             }
-            else
+
+            var files = Directory.GetFiles(tessdataDir, "*.traineddata");
+            if (files.Length == 0)
             {
-                _supportedLanguages.Add("eng");
+                _logger.LogWarning(
+                    "Tesseract tessdata directory '{Path}' exists but contains no .traineddata files. " +
+                    "Download eng.traineddata from https://github.com/tesseract-ocr/tessdata.",
+                    tessdataDir);
+                _initialized = false;
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                var lang = Path.GetFileNameWithoutExtension(file);
+                if (lang != "osd") _supportedLanguages.Add(lang);
             }
 
             _initialized = true;
-            _logger.LogInformation("Tesseract initialized with {Count} languages", _supportedLanguages.Count);
+            _logger.LogInformation("Tesseract initialized with {Count} languages: {Langs}",
+                _supportedLanguages.Count, string.Join(", ", _supportedLanguages));
         }
         catch (Exception ex)
         {

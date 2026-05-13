@@ -114,6 +114,112 @@ public sealed class MainViewModelTests
         vm.ExportToImageCommand.CanExecute(null).Should().BeTrue();
     }
 
+    // ── OCR ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Ocr_WhenEngineUnavailable_SetsStatusAndDoesNotCallRender()
+    {
+        // ROOT CAUSE FIX: TesseractOcrEngine was logging "initialized" even when
+        // tessdata was missing, then crashing in ProcessPageAsync (log 2026-05-13 18:17:27).
+        // Now IsAvailable = false when tessdata is absent; OcrAsync bails out early.
+        var engine = Substitute.For<IPdfEngine>();
+        var ocrEngine = Substitute.For<IOcrEngine>();
+        ocrEngine.IsAvailable.Returns(false);
+
+        var info = new PdfDocumentInfo { FilePath = "C:\\doc.pdf", PageCount = 2 };
+        engine.IsOpen.Returns(true);
+        engine.FilePath.Returns("C:\\doc.pdf");
+        engine.DocumentInfo.Returns(info);
+
+        var vm = new MainViewModel(
+            NullLogger<MainViewModel>.Instance,
+            engine, Substitute.For<IPdfEditor>(),
+            ocrEngine, Substitute.For<IRedactionEngine>(),
+            Substitute.For<IFileDialogService>());
+
+        vm.IsDocumentLoaded = true;
+        vm.DocumentInfo = info;
+        vm.TotalPages = 2;
+
+        await vm.OcrCommand.ExecuteAsync(null);
+
+        vm.StatusText.Should().Contain("unavailable");
+        await engine.DidNotReceive().RenderPageAsync(
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>());
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    // ── Rotate ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Rotate_ClosesEngineBefore_RotatePagesAsync()
+    {
+        // ROOT CAUSE FIX: PdfiumViewer holds a file lock. Engine must be closed
+        // before PdfSharp can overwrite the file, otherwise File.Move throws
+        // UnauthorizedAccessException (confirmed in log 2026-05-13 17:51:32).
+        var callOrder = new List<string>();
+
+        var (vm, engine, editor, _) = CreateDocumentLoadedVm("C:\\doc.pdf");
+
+        engine.When(e => e.CloseAsync())
+              .Do(_ => callOrder.Add("close"));
+        engine.OpenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  callOrder.Add("open");
+                  var info = new PdfDocumentInfo { FilePath = ci.Arg<string>(), PageCount = 3 };
+                  return Task.FromResult(OperationResult.Ok(info));
+              });
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(ci =>
+              {
+                  callOrder.Add("rotate");
+                  return Task.FromResult(OperationResult.Ok("Rotated 3 pages by 90°"));
+              });
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        // "close" must come before "rotate"
+        callOrder.Should().ContainInOrder("close", "rotate");
+        vm.StatusText.Should().Contain("Rotation complete");
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rotate_ReopensFileEvenWhenRotationFails()
+    {
+        var (vm, engine, editor, _) = CreateDocumentLoadedVm("C:\\doc.pdf");
+        var reopened = false;
+
+        engine.OpenAsync("C:\\doc.pdf", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+              .Returns(_ =>
+              {
+                  reopened = true;
+                  var info = new PdfDocumentInfo { FilePath = "C:\\doc.pdf", PageCount = 3 };
+                  return Task.FromResult(OperationResult.Ok(info));
+              });
+        editor.RotatePagesAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<int>>(),
+            Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(Task.FromResult(OperationResult.Fail("Access denied")));
+        engine.RenderPageAsync(Arg.Any<int>(), Arg.Any<double>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+        engine.RenderThumbnailAsync(Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+              .Returns(OperationResult.Ok(Array.Empty<byte>()));
+
+        await vm.RotateCommand.ExecuteAsync(null);
+
+        reopened.Should().BeTrue("file must always be reopened after rotate attempt");
+        vm.StatusText.Should().Contain("failed");
+        vm.IsBusy.Should().BeFalse();
+    }
+
     // ── Sign ─────────────────────────────────────────────────────────────────
 
     [Fact]

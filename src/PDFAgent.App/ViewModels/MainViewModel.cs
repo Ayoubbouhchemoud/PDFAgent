@@ -186,27 +186,45 @@ public sealed partial class MainViewModel : ObservableObject
     {
         IsBusy = true;
         StatusText = "Rotating pages…";
+        // Capture path before closing the engine
+        var path = _pdfEngine.FilePath;
+        var pages = Enumerable.Range(0, TotalPages).ToList();
         try
         {
-            var pages = Enumerable.Range(0, TotalPages).ToList();
-            var result = await _pdfEditor.RotatePagesAsync(_pdfEngine.FilePath, pages, 90);
-            StatusText = result.IsSuccess ? $"Rotation complete — {result.Message}" : $"Rotation failed: {result.Message}";
+            // PdfiumViewer holds an exclusive lock on the file.
+            // Close it first so PdfSharp can overwrite it, then reopen.
+            await _pdfEngine.CloseAsync();
 
-            if (result.IsSuccess)
+            var result = await _pdfEditor.RotatePagesAsync(path, pages, 90);
+            StatusText = result.IsSuccess
+                ? $"Rotation complete — {result.Message}"
+                : $"Rotation failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Rotate failed");
+            StatusText = $"Rotate error: {ex.Message}";
+        }
+        finally
+        {
+            // Always reopen so the viewer reflects the (possibly rotated) file
+            try
             {
-                // Re-open to reflect rotation in viewer
-                var path = _pdfEngine.FilePath;
-                await _pdfEngine.CloseAsync();
                 var reopen = await _pdfEngine.OpenAsync(path);
                 if (reopen.IsSuccess && reopen.Value != null)
                 {
                     DocumentInfo = reopen.Value;
+                    TotalPages = reopen.Value.PageCount;
                     await LoadThumbnailsAsync();
                     await RenderCurrentPagesAsync();
                 }
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reopen file after rotate");
+            }
+            IsBusy = false;
         }
-        finally { IsBusy = false; }
     }
 
     // ── Tools ───────────────────────────────────────────────────────────────
@@ -214,6 +232,24 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task OcrAsync()
     {
+        if (!_ocrEngine.IsAvailable)
+        {
+            var tessdataPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "PDFAgent", "tessdata");
+            System.Windows.MessageBox.Show(
+                $"OCR requires Tesseract language data files.\n\n" +
+                $"1. Download 'eng.traineddata' from:\n" +
+                $"   https://github.com/tesseract-ocr/tessdata\n\n" +
+                $"2. Place it in:\n   {tessdataPath}\n\n" +
+                $"3. Restart the application.",
+                "OCR Unavailable",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            StatusText = "OCR unavailable — tessdata missing (see popup for instructions)";
+            return;
+        }
+
         IsBusy = true;
         StatusText = "Running OCR…";
         try
