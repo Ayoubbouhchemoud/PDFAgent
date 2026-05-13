@@ -268,7 +268,15 @@
                                             HorizontalAlignment="Center"
                                             Margin="24,8">
                                         <Image Source="{Binding ImageData, Converter={StaticResource BytesToImage}}"
-                                               Stretch="Uniform" />
+                                               Stretch="None">
+                                            <Image.LayoutTransform>
+                                                <ScaleTransform
+                                                    ScaleX="{Binding DataContext.CurrentZoom,
+                                                             RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    ScaleY="{Binding DataContext.CurrentZoom,
+                                                             RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                            </Image.LayoutTransform>
+                                        </Image>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

@@ -440,7 +440,7 @@ public sealed partial class MainViewModel : ObservableObject
         RenderedPages.Clear();
         for (var i = 0; i < TotalPages; i++)
         {
-            var result = await _pdfEngine.RenderPageAsync(i, dpi: CurrentZoom * 72);
+            var result = await _pdfEngine.RenderPageAsync(i, dpi: 150);
             RenderedPages.Add(new RenderedPageItem
             {
                 PageNumber = i + 1,
