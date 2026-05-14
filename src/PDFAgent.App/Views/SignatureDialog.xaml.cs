@@ -1,10 +1,10 @@
 using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
 using Microsoft.Win32;
 using PDFAgent.App.ViewModels;
 
@@ -13,16 +13,16 @@ namespace PDFAgent.App.Views;
 public partial class SignatureDialog : Window
 {
     private bool _isDrawing;
-    private Polyline? _currentPolyline;
+    private System.Windows.Shapes.Polyline? _currentPolyline;
 
-    private static readonly Brush StrokeBrush = Brushes.Black;
-    private const double StrokeThickness = 2.0;
-
-    public SignatureDialog() => InitializeComponent();
+    public SignatureDialog()
+    {
+        InitializeComponent();
+    }
 
     private SignatureDialogViewModel Vm => (SignatureDialogViewModel)DataContext;
 
-    // ── Drawing ─────────────────────────────────────────────────────────────
+    // ── Drawing ──────────────────────────────────────────────────────────────
 
     private void DrawCanvas_MouseDown(object sender, MouseButtonEventArgs e)
     {
@@ -31,23 +31,25 @@ public partial class SignatureDialog : Window
         DrawHint.Visibility = Visibility.Collapsed;
 
         var pos = e.GetPosition(DrawCanvas);
-        _currentPolyline = new Polyline
+        _currentPolyline = new System.Windows.Shapes.Polyline
         {
-            Stroke = StrokeBrush,
-            StrokeThickness = StrokeThickness,
+            Stroke             = Brushes.Black,
+            StrokeThickness    = 2.5,
             StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-            Points = new PointCollection { pos, pos }, // two identical pts → visible dot on click
+            StrokeEndLineCap   = PenLineCap.Round,
+            StrokeLineJoin     = PenLineJoin.Round,
+            Points             = new PointCollection { pos, pos },
         };
         DrawCanvas.Children.Add(_currentPolyline);
         DrawCanvas.CaptureMouse();
+        e.Handled = true;
     }
 
     private void DrawCanvas_MouseMove(object sender, MouseEventArgs e)
     {
         if (!_isDrawing || _currentPolyline == null) return;
         _currentPolyline.Points.Add(e.GetPosition(DrawCanvas));
+        e.Handled = true;
     }
 
     private void DrawCanvas_MouseUp(object sender, MouseButtonEventArgs e)
@@ -59,27 +61,42 @@ public partial class SignatureDialog : Window
 
     private void DrawCanvas_MouseLeave(object sender, MouseEventArgs e)
     {
-        if (_isDrawing)
-        {
-            _isDrawing = false;
-            _currentPolyline = null;
-            DrawCanvas.ReleaseMouseCapture();
-        }
+        if (!_isDrawing) return;
+        _isDrawing = false;
+        _currentPolyline = null;
+        DrawCanvas.ReleaseMouseCapture();
     }
 
-    private void ClearDrawing_Click(object sender, RoutedEventArgs e)
+    private void ClearDrawing_Click(object sender, MouseButtonEventArgs e)
     {
         DrawCanvas.Children.Clear();
         DrawHint.Visibility = Visibility.Visible;
     }
 
-    // ── Image upload ─────────────────────────────────────────────────────────
+    // Serialise all polylines to compact vector JSON that the PDF engine re-draws.
+    private byte[] ExtractDrawingAsVectorJson()
+    {
+        DrawCanvas.UpdateLayout();
+        var canvasW = Math.Max(DrawCanvas.ActualWidth,  1);
+        var canvasH = Math.Max(DrawCanvas.ActualHeight, 1);
+
+        var strokes = DrawCanvas.Children
+            .OfType<System.Windows.Shapes.Polyline>()
+            .Select(pl => pl.Points.Select(pt => new[] { pt.X, pt.Y }).ToArray())
+            .Where(s => s.Length >= 2)
+            .ToArray();
+
+        var payload = new { t = "v", w = canvasW, h = canvasH, s = strokes };
+        return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
+    }
+
+    // ── Image upload ──────────────────────────────────────────────────────────
 
     private void BrowseImage_Click(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
         {
-            Title = "Select signature image",
+            Title  = "Select signature image",
             Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
         };
         if (dlg.ShowDialog(this) != true) return;
@@ -89,7 +106,7 @@ public partial class SignatureDialog : Window
             var bmp = new BitmapImage(new Uri(dlg.FileName));
             bmp.Freeze();
             Vm.RawUploadedBitmap = bmp;
-            Vm.UploadStatus = System.IO.Path.GetFileName(dlg.FileName);
+            Vm.UploadStatus      = Path.GetFileName(dlg.FileName);
             RefreshUploadedPreview();
         }
         catch (Exception ex)
@@ -111,41 +128,19 @@ public partial class SignatureDialog : Window
         Vm.SignatureBytes = bytes;
 
         using var ms = new MemoryStream(bytes);
-        var preview = new BitmapImage();
+        var preview  = new BitmapImage();
         preview.BeginInit();
         preview.StreamSource = ms;
-        preview.CacheOption = BitmapCacheOption.OnLoad;
+        preview.CacheOption  = BitmapCacheOption.OnLoad;
         preview.EndInit();
         preview.Freeze();
         Vm.UploadedPreview = preview;
     }
 
-    // ── Rendering helpers ─────────────────────────────────────────────────────
-
-    private BitmapSource RenderDrawingToBitmap()
-    {
-        var w = (int)DrawCanvas.ActualWidth;
-        var h = (int)DrawCanvas.ActualHeight;
-        if (w <= 0 || h <= 0) return new WriteableBitmap(1, 1, 96, 96, PixelFormats.Pbgra32, null);
-
-        var dv = new DrawingVisual();
-        using (var dc = dv.RenderOpen())
-        {
-            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, w, h));
-            dc.DrawRectangle(new VisualBrush(DrawCanvas) { Stretch = Stretch.None },
-                null, new Rect(0, 0, w, h));
-        }
-
-        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-        rtb.Render(dv);
-        rtb.Freeze();
-        return rtb;
-    }
-
-    // Pixels brighter than `threshold` in all channels become transparent.
+    // Pixels where R, G, B are all >= threshold → transparent.
     private static byte[] ApplyThreshold(BitmapSource source, byte threshold)
     {
-        var bgra = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        var bgra   = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
         int width  = bgra.PixelWidth;
         int height = bgra.PixelHeight;
         int stride = width * 4;
@@ -154,24 +149,23 @@ public partial class SignatureDialog : Window
 
         for (int i = 0; i < pixels.Length; i += 4)
         {
-            byte b = pixels[i + 0];
-            byte g = pixels[i + 1];
-            byte r = pixels[i + 2];
-            if (r >= threshold && g >= threshold && b >= threshold)
-                pixels[i + 3] = 0; // transparent
+            if (pixels[i + 2] >= threshold  // R
+             && pixels[i + 1] >= threshold  // G
+             && pixels[i + 0] >= threshold) // B
+                pixels[i + 3] = 0;
         }
 
         var wb = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
         wb.WritePixels(new Int32Rect(0, 0, width, height), pixels, stride, 0);
 
-        using var ms = new MemoryStream();
+        using var ms  = new MemoryStream();
         var enc = new PngBitmapEncoder();
         enc.Frames.Add(BitmapFrame.Create(wb));
         enc.Save(ms);
         return ms.ToArray();
     }
 
-    // ── Apply / Cancel ───────────────────────────────────────────────────────
+    // ── Apply / Cancel ────────────────────────────────────────────────────────
 
     private void Apply_Click(object sender, RoutedEventArgs e)
     {
@@ -180,18 +174,17 @@ public partial class SignatureDialog : Window
             if (DrawCanvas.Children.Count == 0)
             {
                 MessageBox.Show("Please draw your signature first.",
-                    "Sign Document", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "Create Signature", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            var bitmap = RenderDrawingToBitmap();
-            Vm.SignatureBytes = ApplyThreshold(bitmap, (byte)Vm.Threshold);
+            Vm.SignatureBytes = ExtractDrawingAsVectorJson();
         }
         else
         {
             if (Vm.SignatureBytes == null)
             {
                 MessageBox.Show("Please select a signature image first.",
-                    "Sign Document", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "Create Signature", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
         }

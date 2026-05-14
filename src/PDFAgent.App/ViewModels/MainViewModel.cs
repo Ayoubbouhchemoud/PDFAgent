@@ -45,6 +45,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
     [NotifyCanExecuteChangedFor(nameof(SignCommand))]
     [NotifyCanExecuteChangedFor(nameof(AnnotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyTextAnnotationsCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
     [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
     [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
@@ -369,38 +370,191 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private void Sign() => SignRequested?.Invoke(this, EventArgs.Empty);
 
+    public async Task<byte[]?> RenderPagePreviewAsync(int pageIndex)
+    {
+        if (!_pdfEngine.IsOpen) return null;
+        var result = await _pdfEngine.RenderPageAsync(pageIndex, dpi: 96);
+        return result.IsSuccess ? result.Value : null;
+    }
+
     public async Task ApplySignatureAsync(SignatureOverlayOptions opts)
     {
-        var tmp = Path.GetTempFileName();
+        if (!_pdfEngine.IsOpen) return;
+        var path = _pdfEngine.FilePath;
+        var tmp  = Path.GetTempFileName();
         IsBusy = true;
         StatusText = "Applying signature…";
+        string? failureStatus = null;
+
         try
         {
-            var result = await _pdfEditor.AddSignatureImageAsync(_pdfEngine.FilePath, tmp, opts);
-            if (!result.IsSuccess)
-            {
-                StatusText = $"Signing failed: {result.Message}";
-                return;
-            }
-
-            var originalPath = _pdfEngine.FilePath;
+            // Release the file lock so PdfSharp can open the same file.
             await _pdfEngine.CloseAsync();
-            File.Move(tmp, originalPath, overwrite: true);
-            tmp = null; // ownership transferred; don't delete
 
-            await OpenFileAsync(originalPath);
-            StatusText = "Signature applied";
-            _logger.LogInformation("Signature applied → {Path}", originalPath);
+            var result = await _pdfEditor.AddSignatureImageAsync(path, tmp, opts);
+            if (result.IsSuccess)
+            {
+                File.Move(tmp, path, overwrite: true);
+                tmp = null;
+                _logger.LogInformation("Signature applied → {Path}", path);
+            }
+            else
+            {
+                failureStatus = $"Signing failed: {result.Message}";
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "ApplySignature failed");
-            StatusText = $"Sign error: {ex.Message}";
+            failureStatus = $"Sign error: {ex.Message}";
         }
         finally
         {
-            IsBusy = false;
             if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+
+            // Always reopen — same pattern as RotateAsync.
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+                    await LoadThumbnailsAsync(ct);
+                    await RenderCurrentPagesAsync(ct, finalStatus: failureStatus);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reopen after sign");
+                StatusText = "Error reopening document after sign";
+            }
+
+            if (failureStatus == null) StatusText = "Signature applied";
+            IsBusy = false;
+        }
+    }
+
+    // ── Sticker / Text-annotation management ────────────────────────────────
+
+    public StickerViewModel AddStickerToCurrentPage(byte[] signatureBytes)
+    {
+        if (CurrentPage < 1 || CurrentPage > RenderedPages.Count)
+            throw new InvalidOperationException("No current page");
+
+        var pageItem = RenderedPages[CurrentPage - 1];
+        var sticker  = new StickerViewModel
+        {
+            Bytes      = signatureBytes,
+            ParentPage = pageItem,
+            X          = 120,
+            Y          = 120,
+            Width      = 220,
+            Height     = 90,
+        };
+        pageItem.Stickers.Add(sticker);
+        return sticker;
+    }
+
+    public void RemoveSticker(StickerViewModel sticker) =>
+        sticker.ParentPage?.Stickers.Remove(sticker);
+
+    public async Task CommitStickerAsync(StickerViewModel sticker)
+    {
+        if (sticker.ParentPage == null || !_pdfEngine.IsOpen) return;
+
+        const double ratio = 72.0 / 150.0;   // image-px at 150 DPI → PDF points
+        var opts = new SignatureOverlayOptions
+        {
+            ImageBytes      = sticker.Bytes,
+            PageNumber      = sticker.ParentPage.PageNumber,
+            AbsoluteX       = sticker.X * ratio,
+            AbsoluteY       = sticker.Y * ratio,
+            SignatureWidth  = sticker.Width  * ratio,
+            SignatureHeight = sticker.Height * ratio,
+        };
+
+        sticker.ParentPage.Stickers.Remove(sticker);
+        await ApplySignatureAsync(opts);
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ApplyTextAnnotationsAsync() => await BakeTextAnnotationsAsync();
+
+    public async Task BakeTextAnnotationsAsync()
+    {
+        var records = RenderedPages
+            .SelectMany(p => p.TextAnnotations
+                .Where(a => !string.IsNullOrWhiteSpace(a.Text))
+                .Select(a => new TextAnnotationRecord
+                {
+                    PageNumber = p.PageNumber,
+                    X          = a.X      * (72.0 / 150.0),
+                    Y          = a.Y      * (72.0 / 150.0),
+                    Width      = a.Width  * (72.0 / 150.0),
+                    Height     = a.Height * (72.0 / 150.0),
+                    Text       = a.Text,
+                    FontSize   = a.FontSize,
+                }))
+            .ToList();
+
+        if (records.Count == 0)
+        {
+            StatusText = "No text annotations to apply";
+            return;
+        }
+
+        var path = _pdfEngine.FilePath;
+        var tmp  = Path.GetTempFileName();
+        IsBusy = true;
+        StatusText = "Applying text edits…";
+        string? failureStatus = null;
+        try
+        {
+            await _pdfEngine.CloseAsync();
+            var result = await _pdfEditor.BakeTextAnnotationsAsync(path, tmp, records);
+            if (result.IsSuccess)
+            {
+                File.Move(tmp, path, overwrite: true);
+                tmp = null;
+            }
+            else
+            {
+                failureStatus = $"Text apply failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "BakeTextAnnotations failed");
+            failureStatus = $"Text error: {ex.Message}";
+        }
+        finally
+        {
+            if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+                    foreach (var p in RenderedPages) p.TextAnnotations.Clear();
+                    await LoadThumbnailsAsync(ct);
+                    await RenderCurrentPagesAsync(ct, finalStatus: failureStatus);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Reopen after BakeText failed");
+            }
+            if (failureStatus == null) StatusText = "Text edits applied";
+            IsBusy = false;
         }
     }
 
@@ -549,4 +703,7 @@ public sealed partial class RenderedPageItem : CommunityToolkit.Mvvm.ComponentMo
 
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
     private byte[]? _imageData;
+
+    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.StickerViewModel>         Stickers         { get; } = new();
+    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextAnnotationViewModel>  TextAnnotations  { get; } = new();
 }

@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:PDFAgent.App.ViewModels"
         xmlns:converters="clr-namespace:PDFAgent.App.Converters"
+        xmlns:local="clr-namespace:PDFAgent.App.Views"
         Title="PDF Professional" Height="900" Width="1400"
         WindowState="Maximized"
         Background="{DynamicResource SurfaceBrush}"
@@ -89,8 +90,14 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding RedactCommand}" ToolTip="Redact content">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRedact}" />
                     </Button>
-                    <Button Style="{StaticResource IconButton}" Command="{Binding SignCommand}" ToolTip="Sign document">
+                    <Button Style="{StaticResource IconButton}" Command="{Binding SignCommand}" ToolTip="Sign document (drag sticker to position)">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSign}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ApplyTextAnnotationsCommand}"
+                            ToolTip="Apply text edits to PDF  (double-click any page to add text)">
+                        <TextBlock Text="T↓" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
                     </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" />
@@ -313,67 +320,41 @@
                     </Border>
 
                     <!-- Page canvas -->
-                    <ScrollViewer Grid.Row="1"
+                    <ScrollViewer x:Name="PageScrollViewer"
+                                  Grid.Row="1"
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
                                   Background="{DynamicResource DocumentCanvasBrush}"
                                   Padding="0,8"
-                                  CanContentScroll="True">
-                        <ItemsControl ItemsSource="{Binding RenderedPages}" Margin="0,0,0,16"
-                                      VirtualizingPanel.IsVirtualizing="True"
-                                      VirtualizingPanel.VirtualizationMode="Recycling"
-                                      VirtualizingPanel.ScrollUnit="Pixel">
+                                  CanContentScroll="False">
+                        <ItemsControl x:Name="PageItemsControl"
+                                      ItemsSource="{Binding RenderedPages}"
+                                      Margin="0,0,0,16">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <VirtualizingStackPanel />
+                                    <StackPanel />
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
+                                    <!--
+                                        The zoom ScaleTransform is applied here (on the outer Border)
+                                        so it scales the page image AND all overlay stickers/annotations
+                                        together as one unit.
+                                    -->
                                     <Border Background="{DynamicResource SurfaceContainerLowestBrush}"
                                             CornerRadius="3"
                                             Effect="{StaticResource PageShadow}"
                                             HorizontalAlignment="Center"
                                             Margin="24,8">
-                                        <Grid>
-                                            <!-- Loading placeholder — shown while ImageData is null -->
-                                            <Border Width="595" Height="842"
-                                                    Background="{DynamicResource SurfaceContainerBrush}"
-                                                    CornerRadius="3">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ImageData}" Value="{x:Null}">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                    </Style>
-                                                </Border.Style>
-                                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                                    <TextBlock Text="{Binding PageNumber, StringFormat='Page {0}'}"
-                                                               FontSize="14"
-                                                               Foreground="{DynamicResource OutlineBrush}"
-                                                               HorizontalAlignment="Center" />
-                                                    <TextBlock Text="Loading…"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource OutlineBrush}"
-                                                               HorizontalAlignment="Center"
-                                                               Margin="0,4,0,0" />
-                                                </StackPanel>
-                                            </Border>
-                                            <!-- Rendered image — shown once ImageData arrives -->
-                                            <Image Source="{Binding ImageData, Converter={StaticResource BytesToImage}}"
-                                                   Stretch="None">
-                                                <Image.LayoutTransform>
-                                                    <ScaleTransform
-                                                        ScaleX="{Binding DataContext.CurrentZoom,
-                                                                 RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                        ScaleY="{Binding DataContext.CurrentZoom,
-                                                                 RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
-                                                </Image.LayoutTransform>
-                                            </Image>
-                                        </Grid>
+                                        <Border.LayoutTransform>
+                                            <ScaleTransform
+                                                ScaleX="{Binding DataContext.CurrentZoom,
+                                                         RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                ScaleY="{Binding DataContext.CurrentZoom,
+                                                         RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                        </Border.LayoutTransform>
+                                        <local:PdfPageView />
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

@@ -15,6 +15,7 @@ public interface IPdfEditor
     Task<OperationResult> AddStampAsync(string filePath, string outputPath, string stampText, CancellationToken ct = default);
     Task<OperationResult> AddPageAnnotationAsync(string filePath, string outputPath, int pageNumber, string text, CancellationToken ct = default);
     Task<OperationResult> AddSignatureImageAsync(string filePath, string outputPath, SignatureOverlayOptions opts, CancellationToken ct = default);
+    Task<OperationResult> BakeTextAnnotationsAsync(string filePath, string outputPath, IReadOnlyList<TextAnnotationRecord> annotations, CancellationToken ct = default);
 }
 
 public enum SplitMode

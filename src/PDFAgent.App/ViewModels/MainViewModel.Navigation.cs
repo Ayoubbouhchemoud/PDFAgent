@@ -15,6 +15,7 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(RedactCommand))]
     [NotifyCanExecuteChangedFor(nameof(SignCommand))]
     [NotifyCanExecuteChangedFor(nameof(AnnotateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyTextAnnotationsCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
     [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
     [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
