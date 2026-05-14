@@ -1,76 +1,83 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- ===== Surface ===== -->
-    <Color x:Key="SurfaceColor">#FFFFF8F6</Color>
-    <Color x:Key="SurfaceVariantColor">#FFF5DED9</Color>
-    <Color x:Key="SurfaceContainerLowestColor">#FFFFFFFF</Color>
-    <Color x:Key="SurfaceContainerLowColor">#FFFFF0ED</Color>
-    <Color x:Key="SurfaceContainerColor">#FFFCE9E5</Color>
-    <Color x:Key="SurfaceContainerHighColor">#FFEFE3E0</Color>
+    <!-- ===== Stitch "Precision Productivity" — Deep Indigo palette ===== -->
 
-    <SolidColorBrush x:Key="SurfaceBrush"                 Color="#FFF8F6" />
-    <SolidColorBrush x:Key="SurfaceVariantBrush"          Color="#F5DED9" />
+    <!-- Surface -->
+    <SolidColorBrush x:Key="SurfaceBrush"                 Color="#F7F9FB" />
+    <SolidColorBrush x:Key="SurfaceBrightBrush"           Color="#F7F9FB" />
+    <SolidColorBrush x:Key="SurfaceDimBrush"              Color="#D8DADC" />
+    <SolidColorBrush x:Key="SurfaceVariantBrush"          Color="#E0E3E5" />
     <SolidColorBrush x:Key="SurfaceContainerLowestBrush"  Color="#FFFFFF" />
-    <SolidColorBrush x:Key="SurfaceContainerLowBrush"     Color="#FFF0ED" />
-    <SolidColorBrush x:Key="SurfaceContainerBrush"        Color="#FCE9E5" />
-    <SolidColorBrush x:Key="SurfaceContainerHighBrush"    Color="#EFE3E0" />
+    <SolidColorBrush x:Key="SurfaceContainerLowBrush"     Color="#F2F4F6" />
+    <SolidColorBrush x:Key="SurfaceContainerBrush"        Color="#ECEEF0" />
+    <SolidColorBrush x:Key="SurfaceContainerHighBrush"    Color="#E6E8EA" />
+    <SolidColorBrush x:Key="SurfaceContainerHighestBrush" Color="#E0E3E5" />
 
-    <!-- ===== On-Surface ===== -->
-    <SolidColorBrush x:Key="OnSurfaceBrush"        Color="#201A19" />
-    <SolidColorBrush x:Key="OnSurfaceVariantBrush" Color="#534341" />
-    <SolidColorBrush x:Key="OutlineBrush"          Color="#857371" />
-    <SolidColorBrush x:Key="OutlineVariantBrush"   Color="#D8C2BE" />
+    <!-- On-Surface -->
+    <SolidColorBrush x:Key="OnSurfaceBrush"        Color="#191C1E" />
+    <SolidColorBrush x:Key="OnSurfaceVariantBrush" Color="#45464E" />
+    <SolidColorBrush x:Key="OutlineBrush"          Color="#75777E" />
+    <SolidColorBrush x:Key="OutlineVariantBrush"   Color="#C6C6CE" />
 
-    <!-- ===== Primary — Terracotta ===== -->
-    <SolidColorBrush x:Key="PrimaryBrush"            Color="#9A4023" />
+    <!-- Primary — Deep Indigo -->
+    <SolidColorBrush x:Key="PrimaryBrush"            Color="#182442" />
     <SolidColorBrush x:Key="OnPrimaryBrush"          Color="#FFFFFF" />
-    <SolidColorBrush x:Key="PrimaryContainerBrush"   Color="#FFDBD1" />
-    <SolidColorBrush x:Key="OnPrimaryContainerBrush" Color="#3A0A00" />
-    <SolidColorBrush x:Key="PrimaryHoverBrush"       Color="#7D3318" />
-    <SolidColorBrush x:Key="PrimaryPressedBrush"     Color="#612610" />
+    <SolidColorBrush x:Key="PrimaryContainerBrush"   Color="#2E3A59" />
+    <SolidColorBrush x:Key="OnPrimaryContainerBrush" Color="#98A4C9" />
+    <SolidColorBrush x:Key="PrimaryHoverBrush"       Color="#1E2D52" />
+    <SolidColorBrush x:Key="PrimaryPressedBrush"     Color="#121B33" />
+    <SolidColorBrush x:Key="PrimaryFixedBrush"       Color="#DAE2FF" />
+    <SolidColorBrush x:Key="InversePrimaryBrush"     Color="#BAC6EC" />
 
-    <!-- ===== Secondary — Sage ===== -->
-    <SolidColorBrush x:Key="SecondaryBrush"            Color="#56642B" />
+    <!-- Secondary -->
+    <SolidColorBrush x:Key="SecondaryBrush"            Color="#505F76" />
     <SolidColorBrush x:Key="OnSecondaryBrush"          Color="#FFFFFF" />
-    <SolidColorBrush x:Key="SecondaryContainerBrush"   Color="#D8ECA4" />
-    <SolidColorBrush x:Key="OnSecondaryContainerBrush" Color="#141F00" />
+    <SolidColorBrush x:Key="SecondaryContainerBrush"   Color="#D0E1FB" />
+    <SolidColorBrush x:Key="OnSecondaryContainerBrush" Color="#54647A" />
 
-    <!-- ===== Tertiary — Teal ===== -->
-    <SolidColorBrush x:Key="TertiaryBrush"            Color="#006768" />
+    <!-- Tertiary -->
+    <SolidColorBrush x:Key="TertiaryBrush"            Color="#312300" />
     <SolidColorBrush x:Key="OnTertiaryBrush"          Color="#FFFFFF" />
-    <SolidColorBrush x:Key="TertiaryContainerBrush"   Color="#9DF0F0" />
-    <SolidColorBrush x:Key="OnTertiaryContainerBrush" Color="#002020" />
+    <SolidColorBrush x:Key="TertiaryContainerBrush"   Color="#4A380C" />
+    <SolidColorBrush x:Key="OnTertiaryContainerBrush" Color="#BCA26C" />
 
-    <!-- ===== Error ===== -->
+    <!-- Error -->
     <SolidColorBrush x:Key="ErrorBrush"            Color="#BA1A1A" />
     <SolidColorBrush x:Key="OnErrorBrush"          Color="#FFFFFF" />
     <SolidColorBrush x:Key="ErrorContainerBrush"   Color="#FFDAD6" />
-    <SolidColorBrush x:Key="OnErrorContainerBrush" Color="#410002" />
+    <SolidColorBrush x:Key="OnErrorContainerBrush" Color="#93000A" />
 
-    <!-- ===== Inverse / scrim ===== -->
+    <!-- Inverse / Scrim -->
     <SolidColorBrush x:Key="ScrimBrush"            Color="#00000080" />
-    <SolidColorBrush x:Key="InverseSurfaceBrush"   Color="#362F2E" />
-    <SolidColorBrush x:Key="InverseOnSurfaceBrush" Color="#FFEDE9" />
+    <SolidColorBrush x:Key="InverseSurfaceBrush"   Color="#2D3133" />
+    <SolidColorBrush x:Key="InverseOnSurfaceBrush" Color="#EFF1F3" />
 
-    <!-- ===== State-layer opacities (as flat brushes used via Opacity) ===== -->
-    <SolidColorBrush x:Key="StateHoverBrush"   Color="#9A4023" Opacity="0.08" />
-    <SolidColorBrush x:Key="StateFocusBrush"   Color="#9A4023" Opacity="0.12" />
-    <SolidColorBrush x:Key="StatePressedBrush" Color="#9A4023" Opacity="0.16" />
+    <!-- Hover / pressed state layers (surface-container tones) -->
+    <SolidColorBrush x:Key="StateHoverBrush"   Color="#ECEEF0" />
+    <SolidColorBrush x:Key="StateFocusBrush"   Color="#E6E8EA" />
+    <SolidColorBrush x:Key="StatePressedBrush" Color="#D8DADC" />
 
-    <!-- ===== Toolbar ===== -->
-    <SolidColorBrush x:Key="ToolbarBackgroundBrush" Color="#FFF0ED" />
-    <SolidColorBrush x:Key="ToolbarBorderBrush"     Color="#D8C2BE" />
+    <!-- Top nav bar -->
+    <SolidColorBrush x:Key="ToolbarBackgroundBrush" Color="#F7F9FB" />
+    <SolidColorBrush x:Key="ToolbarBorderBrush"     Color="#C6C6CE" />
 
-    <!-- ===== Sidebar ===== -->
-    <SolidColorBrush x:Key="SidebarBackgroundBrush" Color="#FCE9E5" />
-    <SolidColorBrush x:Key="SidebarBorderBrush"     Color="#D8C2BE" />
+    <!-- Left sidebar -->
+    <SolidColorBrush x:Key="SidebarBackgroundBrush" Color="#F2F4F6" />
+    <SolidColorBrush x:Key="SidebarBorderBrush"     Color="#C6C6CE" />
 
-    <!-- ===== Selected thumbnail ===== -->
-    <SolidColorBrush x:Key="ThumbnailSelectedBorderBrush" Color="#9A4023" />
-    <SolidColorBrush x:Key="ThumbnailHoverBackgroundBrush" Color="#FFDBD1" />
+    <!-- Nav active state (primary at ~12% on sidebar bg) -->
+    <SolidColorBrush x:Key="NavActiveBackgroundBrush" Color="#DCE4F0" />
+    <SolidColorBrush x:Key="NavActiveBorderBrush"     Color="#182442" />
 
-    <!-- ===== Page shadow ===== -->
-    <Color x:Key="ShadowColor">#00000026</Color>
+    <!-- Thumbnails -->
+    <SolidColorBrush x:Key="ThumbnailSelectedBorderBrush"  Color="#182442" />
+    <SolidColorBrush x:Key="ThumbnailHoverBackgroundBrush" Color="#DCE4F0" />
+
+    <!-- Document canvas — slightly darker than surface -->
+    <SolidColorBrush x:Key="DocumentCanvasBrush" Color="#F1F5F9" />
+
+    <!-- Page shadow: very soft, 5% opacity -->
+    <Color x:Key="ShadowColor">#0D000000</Color>
 
 </ResourceDictionary>

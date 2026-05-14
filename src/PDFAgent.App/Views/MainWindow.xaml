@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:PDFAgent.App.ViewModels"
         xmlns:converters="clr-namespace:PDFAgent.App.Converters"
-        Title="PDF Agent" Height="900" Width="1400"
+        Title="PDF Professional" Height="900" Width="1400"
         WindowState="Maximized"
         Background="{DynamicResource SurfaceBrush}"
         FontFamily="{DynamicResource BodyFont}"
@@ -17,154 +17,151 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="52" />
+            <RowDefinition Height="64" />
             <RowDefinition Height="*" />
             <RowDefinition Height="28" />
         </Grid.RowDefinitions>
 
-        <!-- ===== TOOLBAR ===== -->
+        <!-- ===== TOP NAV BAR ===== -->
         <Border Grid.Row="0"
-                Background="{DynamicResource ToolbarBackgroundBrush}"
-                BorderBrush="{DynamicResource ToolbarBorderBrush}"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
                 BorderThickness="0,0,0,1"
                 Effect="{StaticResource ToolbarShadow}">
-            <DockPanel Margin="8,0" VerticalAlignment="Center">
+            <DockPanel Margin="16,0" VerticalAlignment="Center">
 
-                <!-- App wordmark -->
-                <TextBlock DockPanel.Dock="Left"
-                           Text="PDF Agent"
-                           FontFamily="{DynamicResource HeadingFont}"
-                           FontSize="18" FontWeight="SemiBold"
-                           Foreground="{DynamicResource PrimaryBrush}"
-                           VerticalAlignment="Center"
-                           Margin="8,0,16,0" />
-
-                <!-- File group -->
+                <!-- Brand -->
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding OpenFileCommand}" ToolTip="Open PDF">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconOpenFile}" Margin="0,0,4,0" />
-                            <TextBlock Text="Open" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding SaveFileCommand}" ToolTip="Save">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSaveFile}" Margin="0,0,4,0" />
-                            <TextBlock Text="Save" />
-                        </StackPanel>
-                    </Button>
-                    <Separator Style="{StaticResource ToolbarSeparator}" />
+                    <Path Data="{StaticResource IconDocument}"
+                          Style="{StaticResource IconPath}"
+                          Stroke="{DynamicResource PrimaryBrush}"
+                          Width="20" Height="20"
+                          Margin="0,0,8,0" />
+                    <TextBlock Text="PDF Professional"
+                               FontFamily="{DynamicResource HeadingFont}"
+                               FontSize="16" FontWeight="SemiBold"
+                               Foreground="{DynamicResource PrimaryBrush}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,24,0" />
                 </StackPanel>
 
-                <!-- Edit group -->
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding MergeCommand}"    ToolTip="Merge PDFs">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconMerge}" Margin="0,0,4,0" />
-                            <TextBlock Text="Merge" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding SplitCommand}"    ToolTip="Split PDF">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSplit}" Margin="0,0,4,0" />
-                            <TextBlock Text="Split" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding RotateCommand}"   ToolTip="Rotate page">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRotate}" Margin="0,0,4,0" />
-                            <TextBlock Text="Rotate" />
-                        </StackPanel>
-                    </Button>
-                    <Separator Style="{StaticResource ToolbarSeparator}" />
-                </StackPanel>
+                <!-- Right cluster: icon-only toolbar buttons -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
 
-                <!-- Tools group -->
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding OcrCommand}"      ToolTip="Run OCR">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconOcr}" Margin="0,0,4,0" />
-                            <TextBlock Text="OCR" />
-                        </StackPanel>
+                    <!-- Page navigation -->
+                    <Button Style="{StaticResource IconButton}" Command="{Binding PreviousPageCommand}" ToolTip="Previous page">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconPrev}" />
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding RedactCommand}"   ToolTip="Redact content">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRedact}" Margin="0,0,4,0" />
-                            <TextBlock Text="Redact" />
-                        </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="2,0">
+                        <TextBlock Text="{Binding CurrentPage, StringFormat='{}{0}'}"
+                                   FontSize="13" Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text=" / " FontSize="13" Foreground="{DynamicResource OutlineBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding TotalPages}"
+                                   FontSize="13" Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding NextPageCommand}" ToolTip="Next page">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconNext}" />
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding SignCommand}"      ToolTip="Sign document">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSign}" Margin="0,0,4,0" />
-                            <TextBlock Text="Sign" />
-                        </StackPanel>
-                    </Button>
-                    <Separator Style="{StaticResource ToolbarSeparator}" />
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" Margin="0,0,4,0" />
-                            <TextBlock Text="Annotate" />
-                        </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource ToolbarButton}" IsEnabled="False"
-                            ToolTip="Text editing is not available in this version">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconEditText}" Margin="0,0,4,0" />
-                            <TextBlock Text="Edit Text" />
-                        </StackPanel>
-                    </Button>
-                    <Separator Style="{StaticResource ToolbarSeparator}" />
-                    <!-- Batch Workflow shortcut -->
-                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding OpenBatchWorkflowCommand}" ToolTip="Batch workflows">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconBatch}" Margin="0,0,4,0" />
-                            <TextBlock Text="Batch" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
 
-                <!-- Right cluster: zoom + page -->
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Separator Style="{StaticResource ToolbarSeparator}" />
+
+                    <!-- Zoom -->
                     <Button Style="{StaticResource IconButton}" Command="{Binding ZoomOutCommand}" ToolTip="Zoom out">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconZoomOut}" />
                     </Button>
                     <ComboBox ItemsSource="{Binding ZoomLevels}"
                               SelectedItem="{Binding CurrentZoom}"
                               Style="{StaticResource ToolbarComboBox}"
-                              Width="76" Margin="2,0" />
+                              Width="72" Margin="2,0" />
                     <Button Style="{StaticResource IconButton}" Command="{Binding ZoomInCommand}" ToolTip="Zoom in">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconZoomIn}" />
                     </Button>
+
                     <Separator Style="{StaticResource ToolbarSeparator}" />
-                    <Button Style="{StaticResource IconButton}" Command="{Binding PreviousPageCommand}" ToolTip="Previous page">
-                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconPrev}" />
+
+                    <!-- Tools -->
+                    <Button Style="{StaticResource IconButton}" Command="{Binding OcrCommand}" ToolTip="Run OCR">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconOcr}" />
                     </Button>
-                    <TextBlock Text="{Binding CurrentPage, StringFormat='{}{0}'}"
-                               VerticalAlignment="Center" Margin="4,0"
-                               FontSize="13" Foreground="{DynamicResource OnSurfaceVariantBrush}" />
-                    <TextBlock Text="/" VerticalAlignment="Center" FontSize="13"
-                               Foreground="{DynamicResource OutlineBrush}" />
-                    <TextBlock Text="{Binding TotalPages}"
-                               VerticalAlignment="Center" Margin="4,0"
-                               FontSize="13" Foreground="{DynamicResource OnSurfaceVariantBrush}" />
-                    <Button Style="{StaticResource IconButton}" Command="{Binding NextPageCommand}" ToolTip="Next page">
-                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconNext}" />
+                    <Button Style="{StaticResource IconButton}" Command="{Binding RedactCommand}" ToolTip="Redact content">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRedact}" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding SignCommand}" ToolTip="Sign document">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSign}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" />
+                    </Button>
+
+                    <Separator Style="{StaticResource ToolbarSeparator}" />
+
+                    <!-- Edit -->
+                    <Button Style="{StaticResource IconButton}" Command="{Binding MergeCommand}" ToolTip="Merge PDFs">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconMerge}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding SplitCommand}" ToolTip="Split PDF">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSplit}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding RotateCommand}" ToolTip="Rotate page">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRotate}" />
+                    </Button>
+
+                    <Separator Style="{StaticResource ToolbarSeparator}" />
+
+                    <!-- File -->
+                    <Button Style="{StaticResource IconButton}" Command="{Binding OpenFileCommand}" ToolTip="Open PDF">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconOpenFile}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding SaveFileCommand}" ToolTip="Save PDF">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSaveFile}" />
+                    </Button>
+
                 </StackPanel>
+
+                <!-- Center: inline search bar -->
+                <Border Background="{DynamicResource SurfaceContainerLowBrush}"
+                        BorderBrush="{DynamicResource OutlineVariantBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="8,0"
+                        MaxWidth="360"
+                        VerticalAlignment="Center">
+                    <DockPanel>
+                        <Path DockPanel.Dock="Left" Style="{StaticResource IconPath}"
+                              Data="{StaticResource IconSearch}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,6,0" />
+                        <Button DockPanel.Dock="Right"
+                                Style="{StaticResource IconButton}"
+                                Command="{Binding CloseSearchCommand}"
+                                ToolTip="Close search"
+                                Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVis}}">
+                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconClose}" />
+                        </Button>
+                        <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource InputTextBox}"
+                                 Height="32"
+                                 VerticalAlignment="Center" />
+                    </DockPanel>
+                </Border>
+
             </DockPanel>
         </Border>
 
         <!-- ===== MAIN CONTENT ===== -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="ThumbnailColumn" Width="216" MinWidth="120" MaxWidth="360" />
+                <ColumnDefinition Width="260" MinWidth="180" MaxWidth="380" />
                 <ColumnDefinition Width="4" />
                 <ColumnDefinition Width="*" MinWidth="300" />
                 <ColumnDefinition Width="4" />
                 <ColumnDefinition x:Name="PropertiesColumn" Width="300" MinWidth="200" MaxWidth="480" />
             </Grid.ColumnDefinitions>
 
-            <!-- ── Thumbnail strip ── -->
+            <!-- ── Left Sidebar: Nav + Thumbnails ── -->
             <Border Grid.Column="0"
                     Background="{DynamicResource SidebarBackgroundBrush}"
                     BorderBrush="{DynamicResource SidebarBorderBrush}"
@@ -172,24 +169,60 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- Panel header -->
-                    <Border Grid.Row="0" Padding="12,10,8,8">
-                        <DockPanel>
-                            <TextBlock Text="PAGES" Style="{StaticResource SectionHeader}"
-                                       DockPanel.Dock="Left" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding TotalPages, StringFormat='{}{0}'}"
-                                       DockPanel.Dock="Right"
-                                       FontFamily="{DynamicResource BodyFont}"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource OutlineBrush}"
-                                       VerticalAlignment="Center" />
-                        </DockPanel>
+                    <!-- Section header -->
+                    <Border Grid.Row="0" Padding="16,14,12,6">
+                        <TextBlock Text="DOCUMENT STRUCTURE"
+                                   Style="{StaticResource SectionHeader}"
+                                   Margin="0" />
                     </Border>
 
-                    <ListBox Grid.Row="1"
+                    <!-- Nav items -->
+                    <StackPanel Grid.Row="1" Margin="8,0,8,8">
+                        <!-- Pages is always the active view -->
+                        <Button Style="{StaticResource NavItemButtonActive}" Margin="0,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Style="{StaticResource NavIconPathActive}"
+                                      Data="{StaticResource IconGridView}"
+                                      Margin="0,0,10,0" />
+                                <TextBlock Text="Pages" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource NavItemButton}" Margin="0,1"
+                                IsEnabled="False" ToolTip="Not available in this version">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Style="{StaticResource NavIconPath}"
+                                      Data="{StaticResource IconOutline}"
+                                      Margin="0,0,10,0" />
+                                <TextBlock Text="Outlines" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource NavItemButton}" Margin="0,1"
+                                IsEnabled="False" ToolTip="Not available in this version">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Style="{StaticResource NavIconPath}"
+                                      Data="{StaticResource IconBookmark}"
+                                      Margin="0,0,10,0" />
+                                <TextBlock Text="Bookmarks" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource NavItemButton}" Margin="0,1"
+                                IsEnabled="False" ToolTip="Not available in this version">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Style="{StaticResource NavIconPath}"
+                                      Data="{StaticResource IconLayers}"
+                                      Margin="0,0,10,0" />
+                                <TextBlock Text="Layers" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Thumbnail strip -->
+                    <ListBox Grid.Row="2"
                              Style="{StaticResource ChromelessListBox}"
                              ItemContainerStyle="{StaticResource ThumbnailListBoxItem}"
                              ItemsSource="{Binding Thumbnails}"
@@ -216,6 +249,32 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+
+                    <!-- Footer nav -->
+                    <Border Grid.Row="3"
+                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="8,8">
+                        <StackPanel>
+                            <Button Style="{StaticResource NavItemButton}" Margin="0,1">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path Style="{StaticResource NavIconPath}"
+                                          Data="{StaticResource IconSettings}"
+                                          Margin="0,0,10,0" />
+                                    <TextBlock Text="Settings" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource NavItemButton}" Margin="0,1">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path Style="{StaticResource NavIconPath}"
+                                          Data="{StaticResource IconHelp}"
+                                          Margin="0,0,10,0" />
+                                    <TextBlock Text="Help" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
                 </Grid>
             </Border>
 
@@ -225,14 +284,14 @@
                           Cursor="SizeWE" />
 
             <!-- ── PDF Viewer ── -->
-            <Border Grid.Column="2" Background="{DynamicResource SurfaceContainerBrush}">
+            <Border Grid.Column="2" Background="{DynamicResource DocumentCanvasBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- Search bar strip -->
+                    <!-- Search bar (collapsible strip) -->
                     <Border Grid.Row="0"
                             Background="{DynamicResource SurfaceContainerLowBrush}"
                             BorderBrush="{DynamicResource OutlineVariantBrush}"
@@ -241,7 +300,7 @@
                             Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVis}}">
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                                    Command="{Binding CloseSearchCommand}" ToolTip="Close">
+                                    Command="{Binding CloseSearchCommand}" ToolTip="Close search">
                                 <Path Style="{StaticResource IconPath}" Data="{StaticResource IconClose}" />
                             </Button>
                             <Path DockPanel.Dock="Left" Style="{StaticResource IconPath}"
@@ -257,7 +316,7 @@
                     <ScrollViewer Grid.Row="1"
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
-                                  Background="{DynamicResource SurfaceContainerBrush}"
+                                  Background="{DynamicResource DocumentCanvasBrush}"
                                   Padding="0,8"
                                   CanContentScroll="True">
                         <ItemsControl ItemsSource="{Binding RenderedPages}" Margin="0,0,0,16"
@@ -321,25 +380,32 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <!-- Empty state -->
+                    <!-- Empty state overlay -->
                     <StackPanel Grid.Row="1"
                                 VerticalAlignment="Center" HorizontalAlignment="Center"
                                 Visibility="{Binding IsDocumentEmpty, Converter={StaticResource BoolToVis}}">
                         <Path Style="{StaticResource IconPath}"
-                              Data="{StaticResource IconOpenFile}"
-                              Width="48" Height="48"
+                              Data="{StaticResource IconDocument}"
+                              Width="56" Height="56"
                               Stroke="{DynamicResource OutlineBrush}"
                               HorizontalAlignment="Center" />
                         <TextBlock Text="Open a PDF to get started"
                                    Style="{StaticResource TitleMedium}"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    HorizontalAlignment="Center"
-                                   Margin="0,16,0,8" />
+                                   Margin="0,20,0,10" />
+                        <TextBlock Text="Select a file or drag &amp; drop a PDF here"
+                                   Style="{StaticResource BodySmall}"
+                                   Foreground="{DynamicResource OutlineBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,24" />
                         <Button Content="Open PDF"
                                 Style="{StaticResource FilledButton}"
                                 Command="{Binding OpenFileCommand}"
-                                HorizontalAlignment="Center" />
+                                HorizontalAlignment="Center"
+                                Padding="24,0" />
                     </StackPanel>
+
                 </Grid>
             </Border>
 
@@ -348,117 +414,164 @@
                           HorizontalAlignment="Stretch" ResizeBehavior="PreviousAndNext"
                           Cursor="SizeWE" />
 
-            <!-- ── Properties / Info panel ── -->
+            <!-- ── Properties Panel ── -->
             <Border Grid.Column="4"
                     Background="{DynamicResource SidebarBackgroundBrush}"
                     BorderBrush="{DynamicResource SidebarBorderBrush}"
                     BorderThickness="1,0,0,0">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="16,12">
+                    <StackPanel Margin="16,16">
 
-                        <!-- Document info -->
-                        <TextBlock Text="DOCUMENT" Style="{StaticResource SectionHeader}" />
+                        <!-- Document properties -->
+                        <TextBlock Text="PROPERTIES" Style="{StaticResource SectionHeader}" />
 
-                        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="File"
-                                               Style="{StaticResource PropertyLabel}"
-                                               Width="72" />
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding DocumentInfo.FileName}"
-                                               Style="{StaticResource BodySmall}"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding DocumentInfo.FilePath}" />
-                                </Grid>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Pages"    Style="{StaticResource PropertyLabel}" Width="72" />
-                                    <TextBlock Grid.Column="1" Text="{Binding DocumentInfo.PageCount}" Style="{StaticResource BodySmall}" />
-                                </Grid>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Size"     Style="{StaticResource PropertyLabel}" Width="72" />
-                                    <TextBlock Grid.Column="1" Text="{Binding DocumentInfo.FileSizeKB, StringFormat='{}{0} KB'}" Style="{StaticResource BodySmall}" />
-                                </Grid>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Author"   Style="{StaticResource PropertyLabel}" Width="72" />
-                                    <TextBlock Grid.Column="1" Text="{Binding DocumentInfo.Author}" Style="{StaticResource BodySmall}" TextTrimming="CharacterEllipsis" />
-                                </Grid>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Title"    Style="{StaticResource PropertyLabel}" Width="72" />
-                                    <TextBlock Grid.Column="1" Text="{Binding DocumentInfo.Title}" Style="{StaticResource BodySmall}" TextTrimming="CharacterEllipsis" />
-                                </Grid>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="PDF Ver." Style="{StaticResource PropertyLabel}" Width="72" />
-                                    <TextBlock Grid.Column="1" Text="{Binding DocumentInfo.PdfVersion}" Style="{StaticResource BodySmall}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
+                        <StackPanel Margin="0,4,0,0">
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="FILENAME" Style="{StaticResource PropertyLabel}" VerticalAlignment="Top" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DocumentInfo.FileName}"
+                                           Style="{StaticResource BodySmall}"
+                                           TextWrapping="Wrap"
+                                           ToolTip="{Binding DocumentInfo.FilePath}" />
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="AUTHOR" Style="{StaticResource PropertyLabel}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DocumentInfo.Author}"
+                                           Style="{StaticResource BodySmall}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="PAGES" Style="{StaticResource PropertyLabel}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DocumentInfo.PageCount}"
+                                           Style="{StaticResource BodySmall}" />
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="SIZE" Style="{StaticResource PropertyLabel}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DocumentInfo.FileSizeKB, StringFormat='{}{0} KB'}"
+                                           Style="{StaticResource BodySmall}" />
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="PDF VER." Style="{StaticResource PropertyLabel}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DocumentInfo.PdfVersion}"
+                                           Style="{StaticResource BodySmall}" />
+                            </Grid>
+                        </StackPanel>
 
-                        <Separator Style="{StaticResource PanelSeparator}" />
+                        <Separator Style="{StaticResource PanelSeparator}" Margin="0,12,0,12" />
 
-                        <!-- Quick actions -->
-                        <TextBlock Text="ACTIONS" Style="{StaticResource SectionHeader}" />
-                        <Button Content="Export to Image" Style="{StaticResource FlatButton}" Margin="0,0,0,6"
-                                Command="{Binding ExportToImageCommand}" />
-                        <Button Content="Print"           Style="{StaticResource FlatButton}" Margin="0,0,0,6"
-                                Command="{Binding PrintCommand}" />
-                        <Button Content="Properties…"     Style="{StaticResource FlatButton}" Margin="0,0,0,6"
-                                Command="{Binding PropertiesCommand}" />
+                        <!-- Quick actions 2×2 grid -->
+                        <TextBlock Text="QUICK ACTIONS" Style="{StaticResource SectionHeader}" />
+                        <UniformGrid Rows="2" Columns="2" Margin="0,4,0,0">
+                            <Button Style="{StaticResource QuickActionButton}"
+                                    Command="{Binding SignCommand}"
+                                    Margin="0,0,3,3" ToolTip="Sign document">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSign}"
+                                          HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                    <TextBlock Text="Sign" FontSize="11" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource QuickActionButton}"
+                                    Command="{Binding RedactCommand}"
+                                    Margin="3,0,0,3" ToolTip="Redact content">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRedact}"
+                                          HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                    <TextBlock Text="Redact" FontSize="11" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource QuickActionButton}"
+                                    Command="{Binding OcrCommand}"
+                                    Margin="0,3,3,0" ToolTip="Run OCR">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Path Style="{StaticResource IconPath}" Data="{StaticResource IconOcr}"
+                                          HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                    <TextBlock Text="OCR" FontSize="11" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource QuickActionButton}"
+                                    Command="{Binding ExportToImageCommand}"
+                                    Margin="3,3,0,0" ToolTip="Export to image">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Path Style="{StaticResource IconPath}" Data="{StaticResource IconExport}"
+                                          HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                    <TextBlock Text="Export" FontSize="11" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </UniformGrid>
 
-                        <Separator Style="{StaticResource PanelSeparator}" />
+                        <Separator Style="{StaticResource PanelSeparator}" Margin="0,12,0,12" />
 
-                        <!-- Workflow -->
+                        <!-- Workflows -->
                         <TextBlock Text="WORKFLOWS" Style="{StaticResource SectionHeader}" />
-                        <Button Style="{StaticResource TonalButton}"
+                        <Button Style="{StaticResource FilledButton}"
                                 Command="{Binding OpenBatchWorkflowCommand}"
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
-                                Margin="0,0,0,6">
+                                Margin="0,4,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <Path Style="{StaticResource IconPath}" Data="{StaticResource IconBatch}"
-                                      Stroke="{DynamicResource OnPrimaryContainerBrush}"
+                                <Path Style="{StaticResource IconPathOnPrimary}"
+                                      Data="{StaticResource IconBatch}"
                                       Margin="0,0,6,0" />
                                 <TextBlock Text="New Batch Workflow" />
                             </StackPanel>
                         </Button>
 
-                        <Separator Style="{StaticResource PanelSeparator}" />
+                        <Separator Style="{StaticResource PanelSeparator}" Margin="0,12,0,12" />
 
-                        <!-- OCR Review shortcut -->
-                        <TextBlock Text="OCR" Style="{StaticResource SectionHeader}" />
+                        <!-- OCR Review -->
+                        <TextBlock Text="OCR REVIEW" Style="{StaticResource SectionHeader}" />
                         <Button Content="Review OCR Results"
                                 Style="{StaticResource OutlinedButton}"
                                 Command="{Binding OpenOcrReviewCommand}"
                                 HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Center" />
+                                HorizontalContentAlignment="Center"
+                                Margin="0,4,0,0" />
+
+                        <Separator Style="{StaticResource PanelSeparator}" Margin="0,12,0,12" />
+
+                        <!-- More actions -->
+                        <TextBlock Text="MORE" Style="{StaticResource SectionHeader}" />
+                        <Button Content="Print…"
+                                Style="{StaticResource FlatButton}"
+                                Command="{Binding PrintCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Margin="0,0,0,4" />
+                        <Button Content="Properties…"
+                                Style="{StaticResource FlatButton}"
+                                Command="{Binding PropertiesCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left" />
 
                     </StackPanel>
                 </ScrollViewer>
             </Border>
+
         </Grid>
 
         <!-- ===== STATUS BAR ===== -->
@@ -466,14 +579,20 @@
                 Background="{DynamicResource ToolbarBackgroundBrush}"
                 BorderBrush="{DynamicResource ToolbarBorderBrush}"
                 BorderThickness="0,1,0,0">
-            <StatusBar Style="{StaticResource AppStatusBar}" Padding="8,0">
+            <StatusBar Style="{StaticResource AppStatusBar}" Padding="12,0">
                 <StatusBarItem>
-                    <TextBlock Text="{Binding StatusText}" />
+                    <TextBlock Text="{Binding StatusText}"
+                               FontSize="12"
+                               Foreground="{DynamicResource OnSurfaceVariantBrush}" />
                 </StatusBarItem>
                 <StatusBarItem HorizontalAlignment="Right">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Pages: " />
-                        <TextBlock Text="{Binding TotalPages}" FontWeight="SemiBold" />
+                        <TextBlock Text="Pages: "
+                                   FontSize="12"
+                                   Foreground="{DynamicResource OutlineBrush}" />
+                        <TextBlock Text="{Binding TotalPages}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}" />
                     </StackPanel>
                 </StatusBarItem>
             </StatusBar>
