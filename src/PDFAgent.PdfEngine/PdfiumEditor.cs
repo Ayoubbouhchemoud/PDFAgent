@@ -308,6 +308,57 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    public async Task<OperationResult> AddSignatureImageAsync(
+        string filePath, string outputPath, SignatureOverlayOptions opts, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var input = PdfReader.Open(filePath, PdfDocumentOpenMode.Import);
+                using var output = new PdfDocument();
+                var targetIdx = Math.Clamp(opts.PageNumber - 1, 0, input.PageCount - 1);
+
+                // Keep stream alive for the lifetime of xImage
+                using var imageStream = new MemoryStream(opts.ImageBytes);
+                var xImage = XImage.FromStream(imageStream);
+
+                for (var i = 0; i < input.PageCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var page = output.AddPage(input.Pages[i]);
+                    if (i != targetIdx) continue;
+
+                    using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+                    double pw = page.Width.Point;
+                    double ph = page.Height.Point;
+                    double m  = opts.Margin;
+                    double w  = opts.SignatureWidth;
+                    double h  = opts.SignatureHeight;
+
+                    double x = opts.Placement switch
+                    {
+                        SignaturePlacement.BottomLeft   => m,
+                        SignaturePlacement.BottomCenter => (pw - w) / 2,
+                        _                              => pw - w - m,
+                    };
+                    double y = ph - h - m;
+
+                    gfx.DrawImage(xImage, x, y, w, h);
+                }
+
+                output.Save(outputPath);
+                _logger.LogInformation("Signature applied to page {Page} → {Output}", opts.PageNumber, outputPath);
+                return OperationResult.Ok("Signature applied");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AddSignatureImage failed");
+                return OperationResult.Fail($"Signature failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
     public async Task<OperationResult> AddStampAsync(
         string filePath, string outputPath, string stampText, CancellationToken ct = default)
     {

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Media;
 using PDFAgent.App.ViewModels;
+using PDFAgent.Core.Models;
 
 namespace PDFAgent.App.Views;
 
@@ -23,7 +24,8 @@ public partial class MainWindow : Window
         DataContext = mainViewModel;
 
         mainViewModel.BatchWorkflowRequested += (_, _) => OpenBatchWorkflow();
-        mainViewModel.OcrReviewRequested += (_, _) => OpenOcrReview();
+        mainViewModel.OcrReviewRequested    += (_, _) => OpenOcrReview();
+        mainViewModel.SignRequested         += async (_, _) => await OpenSignatureDialogAsync();
 
         Loaded += async (_, _) => await mainViewModel.InitializeAsync();
     }
@@ -44,6 +46,28 @@ public partial class MainWindow : Window
             ResizeMode = ResizeMode.CanResizeWithGrip,
         };
         win.ShowDialog();
+    }
+
+    private async Task OpenSignatureDialogAsync()
+    {
+        var vm = new SignatureDialogViewModel
+        {
+            TargetPage = _mainViewModel.CurrentPage,
+            TotalPages = _mainViewModel.TotalPages,
+        };
+
+        var dialog = new SignatureDialog { DataContext = vm, Owner = this };
+        if (dialog.ShowDialog() != true || vm.SignatureBytes == null) return;
+
+        var opts = new SignatureOverlayOptions
+        {
+            ImageBytes      = vm.SignatureBytes,
+            PageNumber      = vm.TargetPage,
+            Placement       = vm.Placement,
+            SignatureWidth  = 200,
+            SignatureHeight = 80,
+        };
+        await _mainViewModel.ApplySignatureAsync(opts);
     }
 
     private void OpenOcrReview()

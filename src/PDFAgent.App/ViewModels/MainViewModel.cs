@@ -364,35 +364,44 @@ public sealed partial class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
-    [RelayCommand(CanExecute = nameof(DocumentReady))]
-    private async Task SignAsync()
-    {
-        var output = _fileDialog.SavePdf(
-            Path.GetFileNameWithoutExtension(DocumentInfo!.FileName) + "_signed.pdf");
-        if (output == null) return;
+    public event EventHandler? SignRequested;
 
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private void Sign() => SignRequested?.Invoke(this, EventArgs.Empty);
+
+    public async Task ApplySignatureAsync(SignatureOverlayOptions opts)
+    {
+        var tmp = Path.GetTempFileName();
         IsBusy = true;
-        StatusText = "Applying signature stamp…";
+        StatusText = "Applying signature…";
         try
         {
-            var signedBy = Environment.UserName;
-            var signedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-            var stampText = $"SIGNED — {signedBy} — {signedAt}";
+            var result = await _pdfEditor.AddSignatureImageAsync(_pdfEngine.FilePath, tmp, opts);
+            if (!result.IsSuccess)
+            {
+                StatusText = $"Signing failed: {result.Message}";
+                return;
+            }
 
-            var result = await _pdfEditor.AddStampAsync(_pdfEngine.FilePath, output, stampText);
-            StatusText = result.IsSuccess
-                ? $"Signed — saved to {Path.GetFileName(output)}"
-                : $"Signing failed: {result.Message}";
+            var originalPath = _pdfEngine.FilePath;
+            await _pdfEngine.CloseAsync();
+            File.Move(tmp, originalPath, overwrite: true);
+            tmp = null; // ownership transferred; don't delete
 
-            if (result.IsSuccess)
-                _logger.LogInformation("Document signed by {User} → {Output}", signedBy, output);
+            await OpenFileAsync(originalPath);
+            StatusText = "Signature applied";
+            _logger.LogInformation("Signature applied → {Path}", originalPath);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Sign failed");
+            _logger.LogError(ex, "ApplySignature failed");
             StatusText = $"Sign error: {ex.Message}";
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            IsBusy = false;
+            if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
