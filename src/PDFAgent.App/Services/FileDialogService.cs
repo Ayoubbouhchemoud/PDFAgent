@@ -7,6 +7,8 @@ namespace PDFAgent.App.Services;
 
 public sealed class FileDialogService : IFileDialogService
 {
+    private static Window Owner => Application.Current.MainWindow;
+
     public string? OpenPdf()
     {
         var dialog = new OpenFileDialog
@@ -15,7 +17,7 @@ public sealed class FileDialogService : IFileDialogService
             Title = "Open PDF",
             DefaultExt = ".pdf",
         };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
     public IReadOnlyList<string> OpenMultiplePdfs()
@@ -26,7 +28,7 @@ public sealed class FileDialogService : IFileDialogService
             Title = "Select PDFs to Merge",
             Multiselect = true,
         };
-        return dialog.ShowDialog() == true ? dialog.FileNames : Array.Empty<string>();
+        return dialog.ShowDialog(Owner) == true ? dialog.FileNames : Array.Empty<string>();
     }
 
     public string? SavePdf(string defaultName)
@@ -34,11 +36,11 @@ public sealed class FileDialogService : IFileDialogService
         var dialog = new SaveFileDialog
         {
             Filter = "PDF files (*.pdf)|*.pdf",
-            Title = "Save PDF",
+            Title = "Save PDF as…",
             FileName = defaultName,
             DefaultExt = ".pdf",
         };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
     public string? SelectFolder()
@@ -67,7 +69,7 @@ public sealed class FileDialogService : IFileDialogService
             Filter = "Certificate files (*.pfx;*.p12)|*.pfx;*.p12|All files (*.*)|*.*",
             Title = "Select Signing Certificate",
         };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
     public string? SaveTextFile(string defaultName)
@@ -79,7 +81,7 @@ public sealed class FileDialogService : IFileDialogService
             FileName = defaultName,
             DefaultExt = ".txt",
         };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
     public string? SaveImageFile(string defaultName)
@@ -123,28 +125,29 @@ public sealed class FileDialogService : IFileDialogService
 
     public IReadOnlyList<string>? ShowMergeDialog(IEnumerable<string> initialFiles)
     {
-        var dialog = new Views.MergeDialog();
+        var dialog = new Views.MergeDialog { Owner = Application.Current.MainWindow };
         dialog.PreloadFiles(initialFiles);
         return dialog.ShowDialog() == true ? dialog.OrderedFiles : null;
     }
 
     public SplitDialogResult? ShowSplitDialog(int totalPages)
     {
-        var dialog = new Views.SplitDialog();
+        var dialog = new Views.SplitDialog { Owner = Application.Current.MainWindow };
         if (dialog.ShowDialog() != true) return null;
         return new SplitDialogResult(dialog.SelectedMode, dialog.PageRange, dialog.EveryN);
     }
 
     public AddPageDialogResult? ShowAddPageDialog(int currentPage, int totalPages, double currentWidthPts, double currentHeightPts)
     {
-        var dialog = new Views.AddPageDialog(currentPage, totalPages, currentWidthPts, currentHeightPts);
+        var dialog = new Views.AddPageDialog(currentPage, totalPages, currentWidthPts, currentHeightPts)
+            { Owner = Application.Current.MainWindow };
         if (dialog.ShowDialog() != true) return null;
         return new AddPageDialogResult(dialog.SelectedPosition, dialog.SelectedWidthPts, dialog.SelectedHeightPts);
     }
 
     public RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages)
     {
-        var dialog = new Views.RotateOptionsDialog();
+        var dialog = new Views.RotateOptionsDialog { Owner = Application.Current.MainWindow };
         dialog.CurrentPageNumber = currentPage;
         if (dialog.ShowDialog() != true) return null;
 

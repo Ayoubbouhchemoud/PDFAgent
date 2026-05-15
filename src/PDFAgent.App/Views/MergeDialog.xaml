@@ -162,9 +162,9 @@
                         Style="{StaticResource OutlinedButton}"
                         Width="96" Margin="0,0,8,0"
                         IsCancel="True" Click="Cancel_Click" />
-                <Button Content="Merge →"
+                <Button Content="Preview &amp; Merge →"
                         Style="{StaticResource FilledButton}"
-                        Width="96" IsDefault="True"
+                        Width="130" IsDefault="True"
                         Click="Merge_Click" />
             </StackPanel>
         </Grid>

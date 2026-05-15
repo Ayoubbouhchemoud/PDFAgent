@@ -39,6 +39,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SaveFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CloseFileCommand))]
     [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
     [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
     [NotifyCanExecuteChangedFor(nameof(OcrCommand))]
@@ -54,6 +55,11 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     private bool _isBusy;
+
+    [ObservableProperty]
+    private bool _isMergeMode;
+
+    public ObservableCollection<MergeQueueItem> MergeQueueItems { get; } = new();
 
     [ObservableProperty]
     private bool _isTextEditMode;
@@ -168,45 +174,173 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task CloseFileAsync()
+    {
+        _renderCts.Cancel();
+        _renderCts = new CancellationTokenSource();
+
+        if (_pdfEngine.IsOpen)
+            await _pdfEngine.CloseAsync();
+
+        DocumentInfo = null;
+        TotalPages   = 0;
+        CurrentPage  = 1;
+
+        RenderedPages.Clear();
+        Thumbnails.Clear();
+        ClearUndoStack();
+        IsTextEditMode = false;
+        IsMergeMode    = false;
+        MergeQueueItems.Clear();
+        StatusText = "Ready";
+    }
+
     // ── Edit ────────────────────────────────────────────────────────────────
 
     [RelayCommand]
-    private async Task MergeAsync()
+    private void Merge()
     {
-        // Pre-populate with the currently open file so it's the default first entry.
         var initial = _pdfEngine.IsOpen ? new[] { _pdfEngine.FilePath } : Array.Empty<string>();
 
         var orderedFiles = _fileDialog.ShowMergeDialog(initial);
         if (orderedFiles == null || orderedFiles.Count < 2) return;
 
-        var baseName = orderedFiles.Count == 1
-            ? Path.GetFileNameWithoutExtension(orderedFiles[0])
-            : "merged";
-        var output = _fileDialog.SavePdf($"{baseName}_merged.pdf");
-        if (output == null) return;
+        MergeQueueItems.Clear();
+        for (var i = 0; i < orderedFiles.Count; i++)
+            MergeQueueItems.Add(new MergeQueueItem(orderedFiles[i], i + 1));
+
+        IsMergeMode = true;
+        StatusText  = $"{orderedFiles.Count} files queued — loading previews…";
+
+        _ = LoadMergeQueueThumbnailsAsync();
+    }
+
+    private async Task LoadMergeQueueThumbnailsAsync()
+    {
+        foreach (var item in MergeQueueItems.ToList())
+        {
+            if (!IsMergeMode) return;
+
+            if (!item.IsWordDocument)
+            {
+                try
+                {
+                    var (thumb, count) = await _pdfEngine.RenderExternalPreviewAsync(item.FilePath);
+                    item.ThumbnailBytes = thumb;
+                    item.PageCount      = count;
+                }
+                catch { /* leave thumbnail null, placeholder shows */ }
+            }
+
+            item.IsLoading = false;
+        }
+
+        if (IsMergeMode)
+            StatusText = $"{MergeQueueItems.Count} files queued — review the order, then click Execute Merge.";
+    }
+
+    [RelayCommand]
+    private void CancelMergeMode()
+    {
+        IsMergeMode = false;
+        MergeQueueItems.Clear();
+        StatusText = IsDocumentLoaded
+            ? $"{DocumentInfo?.FileName} — {TotalPages} page(s)"
+            : "Ready";
+    }
+
+    [RelayCommand]
+    private async Task ExecuteMergeAsync()
+    {
+        if (MergeQueueItems.Count < 2)
+        {
+            StatusText = "Add at least 2 files to merge.";
+            return;
+        }
+
+        var files    = MergeQueueItems.Select(i => i.FilePath).ToList();
+        var baseName = Path.GetFileNameWithoutExtension(files[0]);
+        var output   = _fileDialog.SavePdf($"{baseName}_merged.pdf");
+        if (output == null) return;   // user cancelled the save dialog
+
+        IsMergeMode = false;
+        MergeQueueItems.Clear();
+
+        // PdfiumViewer holds a read lock on the open file.
+        // If that file is also in the merge list we must close it first.
+        var currentPath = _pdfEngine.IsOpen ? _pdfEngine.FilePath : null;
+        var currentInQueue = currentPath != null &&
+            files.Any(f => f.Equals(currentPath, StringComparison.OrdinalIgnoreCase));
 
         IsBusy = true;
-        StatusText = $"Merging {orderedFiles.Count} files…";
+        StatusText = $"Merging {files.Count} files…";
         try
         {
-            var result = await _pdfEditor.MergeAsync(orderedFiles, output);
+            if (currentInQueue)
+                await _pdfEngine.CloseAsync();
+
+            var result = await _pdfEditor.MergeAsync(files, output);
             if (result.IsSuccess)
             {
                 StatusText = $"Merge complete — {result.Message}";
-                // Open the merged result automatically.
                 await OpenFileAsync(output);
             }
             else
             {
                 StatusText = $"Merge failed: {result.Message}";
+                System.Windows.MessageBox.Show(
+                    result.Message, "Merge Failed",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Error);
+
+                if (currentInQueue && currentPath != null)
+                    await OpenFileAsync(currentPath);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Merge failed");
+            _logger.LogError(ex, "ExecuteMerge failed");
             StatusText = $"Merge error: {ex.Message}";
+            System.Windows.MessageBox.Show(
+                ex.Message, "Merge Error",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
         }
         finally { IsBusy = false; }
+    }
+
+    [RelayCommand]
+    private void MoveMergeItemUp(MergeQueueItem item)
+    {
+        var idx = MergeQueueItems.IndexOf(item);
+        if (idx <= 0) return;
+        MergeQueueItems.Move(idx, idx - 1);
+        RenumberMergeQueue();
+    }
+
+    [RelayCommand]
+    private void MoveMergeItemDown(MergeQueueItem item)
+    {
+        var idx = MergeQueueItems.IndexOf(item);
+        if (idx < 0 || idx >= MergeQueueItems.Count - 1) return;
+        MergeQueueItems.Move(idx, idx + 1);
+        RenumberMergeQueue();
+    }
+
+    [RelayCommand]
+    private void RemoveMergeItem(MergeQueueItem item)
+    {
+        MergeQueueItems.Remove(item);
+        RenumberMergeQueue();
+        if (MergeQueueItems.Count == 0)
+            StatusText = "No files in merge queue.";
+    }
+
+    private void RenumberMergeQueue()
+    {
+        for (var i = 0; i < MergeQueueItems.Count; i++)
+            MergeQueueItems[i].Index = i + 1;
     }
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
@@ -1121,4 +1255,49 @@ public sealed partial class RenderedPageItem : CommunityToolkit.Mvvm.ComponentMo
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.StickerViewModel>        Stickers        { get; } = new();
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextAnnotationViewModel> TextAnnotations { get; } = new();
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextEditWordViewModel>   EditableWords   { get; } = new();
+}
+
+public sealed partial class MergeQueueItem : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
+{
+    public string FilePath { get; }
+    public string FileName => System.IO.Path.GetFileName(FilePath);
+    public string SubText  => System.IO.Path.GetDirectoryName(FilePath) ?? string.Empty;
+
+    public bool IsWordDocument
+    {
+        get
+        {
+            var ext = System.IO.Path.GetExtension(FilePath).ToLowerInvariant();
+            return ext is ".doc" or ".docx";
+        }
+    }
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private int _index;
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    [CommunityToolkit.Mvvm.ComponentModel.NotifyPropertyChangedFor(nameof(HasThumbnail))]
+    [CommunityToolkit.Mvvm.ComponentModel.NotifyPropertyChangedFor(nameof(ShowPlaceholder))]
+    private byte[]? _thumbnailBytes;
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private int _pageCount;
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    [CommunityToolkit.Mvvm.ComponentModel.NotifyPropertyChangedFor(nameof(ShowPlaceholder))]
+    private bool _isLoading = true;
+
+    public bool HasThumbnail  => ThumbnailBytes != null;
+    public bool ShowPlaceholder => !IsLoading && !HasThumbnail;
+
+    public string PageCountLabel => PageCount > 0 ? $"{PageCount} page{(PageCount == 1 ? "" : "s")}" : "";
+
+    public MergeQueueItem(string filePath, int index)
+    {
+        FilePath = filePath;
+        _index   = index;
+    }
+
+    partial void OnPageCountChanged(int value) =>
+        OnPropertyChanged(nameof(PageCountLabel));
 }

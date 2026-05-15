@@ -9,6 +9,7 @@ public sealed partial class MainViewModel
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDocumentEmpty))]
     [NotifyCanExecuteChangedFor(nameof(SaveFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CloseFileCommand))]
     [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
     [NotifyCanExecuteChangedFor(nameof(RotateCommand))]
     [NotifyCanExecuteChangedFor(nameof(OcrCommand))]

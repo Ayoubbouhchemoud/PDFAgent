@@ -192,6 +192,30 @@ public sealed class PdfiumEngine : IPdfEngine
         }, ct);
     }
 
+    public async Task<(byte[]? Thumbnail, int PageCount)> RenderExternalPreviewAsync(
+        string filePath, int maxSize = 220, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var doc  = PdfDocument.Load(filePath);
+                var size       = doc.PageSizes[0];
+                var scale      = (float)Math.Min(maxSize / size.Width, maxSize / size.Height);
+                var w          = Math.Max(1, (int)(size.Width  * scale));
+                var h          = Math.Max(1, (int)(size.Height * scale));
+                using var img  = doc.Render(0, w, h, 72f, 72f, false);
+                using var ms   = new MemoryStream();
+                img.Save(ms, ImageFormat.Png);
+                return ((byte[]?)ms.ToArray(), doc.PageCount);
+            }
+            catch
+            {
+                return (null, 0);
+            }
+        }, ct);
+    }
+
     private PdfDocumentInfo ExtractDocumentInfo()
     {
         if (_document == null) throw new InvalidOperationException("No document open");

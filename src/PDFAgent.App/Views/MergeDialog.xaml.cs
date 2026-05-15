@@ -69,8 +69,15 @@ public partial class MergeDialog : Window
 
     public void PreloadFiles(IEnumerable<string> paths)
     {
-        foreach (var p in paths.Where(System.IO.File.Exists))
+        foreach (var p in paths.Where(IsSupportedFile))
             AddPath(p);
+    }
+
+    private static bool IsSupportedFile(string path)
+    {
+        if (!System.IO.File.Exists(path)) return false;
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".pdf" or ".doc" or ".docx";
     }
 
     // ── List management ───────────────────────────────────────────────────────
@@ -121,8 +128,8 @@ public partial class MergeDialog : Window
     {
         var dlg = new OpenFileDialog
         {
-            Filter      = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
-            Title       = "Add PDF files",
+            Filter      = "Supported documents (*.pdf;*.docx;*.doc)|*.pdf;*.docx;*.doc|PDF files (*.pdf)|*.pdf|Word documents (*.docx;*.doc)|*.docx;*.doc|All files (*.*)|*.*",
+            Title       = "Add PDF or Word documents",
             Multiselect = true,
         };
         if (dlg.ShowDialog() != true) return;
@@ -138,7 +145,7 @@ public partial class MergeDialog : Window
 
         var dlg = new OpenFileDialog
         {
-            Filter = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
+            Filter = "Supported documents (*.pdf;*.docx;*.doc)|*.pdf;*.docx;*.doc|PDF files (*.pdf)|*.pdf|Word documents (*.docx;*.doc)|*.docx;*.doc|All files (*.*)|*.*",
             Title  = "Replace with…",
         };
         if (dlg.ShowDialog() != true) return;
@@ -283,7 +290,7 @@ public partial class MergeDialog : Window
         {
             // Files dropped from Windows Explorer — insert at drop position
             var pdfs = files
-                .Where(f => f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) && System.IO.File.Exists(f))
+                .Where(IsSupportedFile)
                 .ToList();
 
             // Insert in reverse order so that the first dropped file ends up at targetIdx.

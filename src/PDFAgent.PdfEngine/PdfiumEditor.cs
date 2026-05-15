@@ -21,24 +21,46 @@ public sealed class PdfiumEditor : IPdfEditor
     {
         return await Task.Run(() =>
         {
+            var tempFiles = new List<string>();
             try
             {
                 using var output = new PdfDocument();
                 foreach (var fp in filePaths)
                 {
                     ct.ThrowIfCancellationRequested();
-                    using var input = PdfReader.Open(fp, PdfDocumentOpenMode.Import);
+
+                    var ext     = Path.GetExtension(fp).ToLowerInvariant();
+                    var pdfPath = fp;
+
+                    if (ext is ".doc" or ".docx")
+                    {
+                        var converted = WordConverter.ConvertToPdf(fp);
+                        if (converted == null)
+                            return OperationResult.Fail(
+                                $"Could not convert '{Path.GetFileName(fp)}'. " +
+                                "Ensure Microsoft Word is installed.");
+                        tempFiles.Add(converted);
+                        pdfPath = converted;
+                    }
+
+                    using var input = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Import);
                     for (var i = 0; i < input.PageCount; i++)
                         output.AddPage(input.Pages[i]);
                 }
+
                 output.Save(outputPath);
-                _logger.LogInformation("Merged {Count} PDFs → {Output}", filePaths.Count, outputPath);
+                _logger.LogInformation("Merged {Count} files → {Output}", filePaths.Count, outputPath);
                 return OperationResult.Ok($"Merged {filePaths.Count} files");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Merge failed");
                 return OperationResult.Fail($"Merge failed: {ex.Message}");
+            }
+            finally
+            {
+                foreach (var f in tempFiles)
+                    try { File.Delete(f); } catch { }
             }
         }, ct);
     }

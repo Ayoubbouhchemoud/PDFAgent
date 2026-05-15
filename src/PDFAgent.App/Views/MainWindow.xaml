@@ -173,6 +173,9 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding SaveFileCommand}" ToolTip="Save PDF">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSaveFile}" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding CloseFileCommand}" ToolTip="Close document">
+                        <Path Style="{StaticResource IconPath}" Data="{StaticResource IconClose}" />
+                    </Button>
 
                 </StackPanel>
 
@@ -434,6 +437,241 @@
                                 HorizontalAlignment="Center"
                                 Padding="24,0" />
                     </StackPanel>
+
+                </Grid>
+            </Border>
+
+            <!-- ── Merge Preview Panel (overlays PDF viewer when IsMergeMode = true) ── -->
+            <Border Grid.Column="2"
+                    Panel.ZIndex="20"
+                    Background="{DynamicResource SurfaceBrush}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsMergeMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*"    />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Border Grid.Row="0"
+                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="24,16">
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="Merge Preview"
+                                           FontFamily="{DynamicResource HeadingFont}"
+                                           FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource OnSurfaceBrush}" />
+                                <TextBlock Text="Drag · ↑ ↓ to reorder · ✕ to remove.  Satisfied? Click Execute Merge."
+                                           FontSize="12"
+                                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Content="Cancel"
+                                        Style="{StaticResource OutlinedButton}"
+                                        Width="88" Margin="0,0,8,0"
+                                        Command="{Binding CancelMergeModeCommand}" />
+                                <Button Content="Execute Merge →"
+                                        Style="{StaticResource FilledButton}"
+                                        Padding="16,0" Height="36"
+                                        Command="{Binding ExecuteMergeCommand}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Card grid -->
+                    <ScrollViewer Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Background="{DynamicResource DocumentCanvasBrush}"
+                                  Padding="16,16,16,8">
+                        <ItemsControl ItemsSource="{Binding MergeQueueItems}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- Card -->
+                                    <Border Width="182"
+                                            Margin="6,6"
+                                            Background="{DynamicResource SurfaceContainerLowestBrush}"
+                                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Effect="{StaticResource PageShadow}">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <!-- Thumbnail area -->
+                                                <RowDefinition Height="220" />
+                                                <!-- File info -->
+                                                <RowDefinition Height="Auto" />
+                                                <!-- Action buttons -->
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <!-- ── Thumbnail area ── -->
+                                            <Border Grid.Row="0"
+                                                    Background="{DynamicResource SurfaceContainerLowBrush}"
+                                                    CornerRadius="6,6,0,0"
+                                                    ClipToBounds="True">
+                                                <Grid>
+                                                    <!-- Loading spinner / message -->
+                                                    <TextBlock HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               Text="Loading preview…"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource OutlineBrush}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+
+                                                    <!-- PDF thumbnail -->
+                                                    <Image Source="{Binding ThumbnailBytes, Converter={StaticResource BytesToImage}}"
+                                                           Stretch="Uniform"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Margin="4"
+                                                           Visibility="{Binding HasThumbnail, Converter={StaticResource BoolToVis}}" />
+
+                                                    <!-- Placeholder for Word docs / failed loads -->
+                                                    <StackPanel HorizontalAlignment="Center"
+                                                                VerticalAlignment="Center">
+                                                        <StackPanel.Style>
+                                                            <Style TargetType="StackPanel">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ShowPlaceholder}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </StackPanel.Style>
+                                                        <TextBlock Text="📄"
+                                                                   FontSize="52"
+                                                                   HorizontalAlignment="Center"
+                                                                   TextOptions.TextFormattingMode="Ideal" />
+                                                        <TextBlock HorizontalAlignment="Center"
+                                                                   FontSize="11"
+                                                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                                                   Margin="0,6,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="No preview" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsWordDocument}" Value="True">
+                                                                            <Setter Property="Text" Value="Word Document" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+
+                                                    <!-- Index badge (top-left overlay) -->
+                                                    <Border HorizontalAlignment="Left"
+                                                            VerticalAlignment="Top"
+                                                            Margin="6,6,0,0"
+                                                            Background="{DynamicResource PrimaryBrush}"
+                                                            CornerRadius="4"
+                                                            Padding="6,2">
+                                                        <TextBlock Text="{Binding Index}"
+                                                                   FontSize="11" FontWeight="Bold"
+                                                                   Foreground="White" />
+                                                    </Border>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- ── File info ── -->
+                                            <StackPanel Grid.Row="1" Margin="10,8,10,4">
+                                                <TextBlock Text="{Binding FileName}"
+                                                           FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource OnSurfaceBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding FilePath}" />
+                                                <TextBlock Text="{Binding PageCountLabel}"
+                                                           FontSize="11"
+                                                           Foreground="{DynamicResource OutlineBrush}"
+                                                           Margin="0,2,0,0" />
+                                            </StackPanel>
+
+                                            <!-- ── Action buttons ── -->
+                                            <Grid Grid.Row="2" Margin="8,0,8,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Button Grid.Column="0"
+                                                        Content="↑"
+                                                        Style="{StaticResource OutlinedButton}"
+                                                        Height="34" FontSize="14"
+                                                        Margin="0,0,2,0"
+                                                        ToolTip="Move earlier"
+                                                        Command="{Binding DataContext.MoveMergeItemUpCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Grid.Column="1"
+                                                        Content="↓"
+                                                        Style="{StaticResource OutlinedButton}"
+                                                        Height="34" FontSize="14"
+                                                        Margin="0,0,2,0"
+                                                        ToolTip="Move later"
+                                                        Command="{Binding DataContext.MoveMergeItemDownCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Grid.Column="2"
+                                                        Content="✕"
+                                                        Style="{StaticResource OutlinedButton}"
+                                                        Height="34" FontSize="13"
+                                                        ToolTip="Remove from merge"
+                                                        Command="{Binding DataContext.RemoveMergeItemCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <!-- Footer status -->
+                    <Border Grid.Row="2"
+                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="24,10">
+                        <TextBlock FontSize="12"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} file(s) will be merged in the order shown.">
+                                    <Binding Path="MergeQueueItems.Count" />
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </Border>
 
                 </Grid>
             </Border>
