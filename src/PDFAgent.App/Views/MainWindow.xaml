@@ -4,6 +4,7 @@
         xmlns:vm="clr-namespace:PDFAgent.App.ViewModels"
         xmlns:converters="clr-namespace:PDFAgent.App.Converters"
         xmlns:local="clr-namespace:PDFAgent.App.Views"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="PDF Professional" Height="900" Width="1400"
         WindowState="Maximized"
         Background="{DynamicResource SurfaceBrush}"
@@ -19,6 +20,7 @@
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Ctrl" Command="{Binding UndoCommand}" />
         <KeyBinding Key="E" Modifiers="Ctrl" Command="{Binding ToggleTextEditModeCommand}" />
+        <KeyBinding Key="F" Modifiers="Ctrl" Command="{Binding OpenSearchCommand}" />
     </Window.InputBindings>
 
     <Grid>
@@ -185,25 +187,72 @@
                         BorderThickness="1"
                         CornerRadius="6"
                         Padding="8,0"
-                        MaxWidth="360"
-                        VerticalAlignment="Center">
-                    <DockPanel>
-                        <Path DockPanel.Dock="Left" Style="{StaticResource IconPath}"
-                              Data="{StaticResource IconSearch}"
-                              VerticalAlignment="Center"
-                              Margin="0,0,6,0" />
-                        <Button DockPanel.Dock="Right"
+                        MaxWidth="400"
+                        Height="36"
+                        VerticalAlignment="Center"
+                        MouseDown="SearchBorder_MouseDown">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Search icon / submit button -->
+                        <Button Grid.Column="0"
+                                Style="{StaticResource IconButton}"
+                                Command="{Binding SearchCommand}"
+                                ToolTip="Search (Enter)">
+                            <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSearch}" />
+                        </Button>
+
+                        <!-- TextBox + placeholder overlay -->
+                        <Grid Grid.Column="1">
+                            <TextBox x:Name="SearchQueryTextBox"
+                                     Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource InputTextBox}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="0"
+                                     FontSize="13"
+                                     VerticalAlignment="Stretch"
+                                     VerticalContentAlignment="Center">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Enter"  Command="{Binding SearchCommand}" />
+                                    <KeyBinding Key="Escape" Command="{Binding CloseSearchCommand}" />
+                                </TextBox.InputBindings>
+                            </TextBox>
+                            <!-- Placeholder — hidden as soon as the user types anything -->
+                            <TextBlock IsHitTestVisible="False"
+                                       Text="Search in document…"
+                                       VerticalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource OutlineBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SearchQuery}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding SearchQuery}" Value="">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+
+                        <!-- Clear / close button — shown while a search is active -->
+                        <Button Grid.Column="2"
                                 Style="{StaticResource IconButton}"
                                 Command="{Binding CloseSearchCommand}"
-                                ToolTip="Close search"
+                                ToolTip="Close search (Esc)"
                                 Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVis}}">
                             <Path Style="{StaticResource IconPath}" Data="{StaticResource IconClose}" />
                         </Button>
-                        <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
-                                 Style="{StaticResource InputTextBox}"
-                                 Height="32"
-                                 VerticalAlignment="Center" />
-                    </DockPanel>
+                    </Grid>
                 </Border>
 
             </DockPanel>
@@ -349,68 +398,52 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- Search bar (collapsible strip) -->
+                    <!-- Search results strip — visible while a search is active -->
                     <Border Grid.Row="0"
                             Background="{DynamicResource SurfaceContainerLowBrush}"
                             BorderBrush="{DynamicResource OutlineVariantBrush}"
                             BorderThickness="0,0,0,1"
-                            Padding="12,6"
+                            Padding="12,5"
                             Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVis}}">
                         <DockPanel>
+                            <!-- Close -->
                             <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                                    Command="{Binding CloseSearchCommand}" ToolTip="Close search">
+                                    Command="{Binding CloseSearchCommand}" ToolTip="Close search (Esc)">
                                 <Path Style="{StaticResource IconPath}" Data="{StaticResource IconClose}" />
                             </Button>
+                            <!-- Next match -->
+                            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}"
+                                    Command="{Binding SearchNextCommand}" ToolTip="Next match">
+                                <Path Style="{StaticResource IconPath}" Data="{StaticResource IconNext}" />
+                            </Button>
+                            <!-- Previous match -->
+                            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}"
+                                    Command="{Binding SearchPrevCommand}" ToolTip="Previous match">
+                                <Path Style="{StaticResource IconPath}" Data="{StaticResource IconPrev}" />
+                            </Button>
+                            <!-- "3 / 15" position counter -->
+                            <TextBlock DockPanel.Dock="Right"
+                                       Text="{Binding SearchCurrentPosition}"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                       Margin="6,0" />
+                            <!-- Search icon -->
                             <Path DockPanel.Dock="Left" Style="{StaticResource IconPath}"
                                   Data="{StaticResource IconSearch}"
                                   VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
-                                     Style="{StaticResource InputTextBox}"
-                                     VerticalAlignment="Center" />
+                            <!-- Status: "15 matches" or "No results for …" -->
+                            <TextBlock Text="{Binding SearchStatus}"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource OnSurfaceVariantBrush}" />
                         </DockPanel>
                     </Border>
 
-                    <!-- Page canvas -->
-                    <ScrollViewer x:Name="PageScrollViewer"
+                    <!-- PDF viewer — WebView2 renders the document as a real PDF (native text, selectable) -->
+                    <wv2:WebView2 x:Name="PdfWebView"
                                   Grid.Row="1"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Auto"
-                                  Background="{DynamicResource DocumentCanvasBrush}"
-                                  Padding="0,8"
-                                  CanContentScroll="False">
-                        <ItemsControl x:Name="PageItemsControl"
-                                      ItemsSource="{Binding RenderedPages}"
-                                      Margin="0,0,0,16">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <!--
-                                        The zoom ScaleTransform is applied here (on the outer Border)
-                                        so it scales the page image AND all overlay stickers/annotations
-                                        together as one unit.
-                                    -->
-                                    <Border Background="{DynamicResource SurfaceContainerLowestBrush}"
-                                            CornerRadius="3"
-                                            Effect="{StaticResource PageShadow}"
-                                            HorizontalAlignment="Center"
-                                            Margin="24,8">
-                                        <Border.LayoutTransform>
-                                            <ScaleTransform
-                                                ScaleX="{Binding DataContext.CurrentZoom,
-                                                         RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                ScaleY="{Binding DataContext.CurrentZoom,
-                                                         RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
-                                        </Border.LayoutTransform>
-                                        <local:PdfPageView />
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                  Visibility="{Binding IsDocumentLoaded, Converter={StaticResource BoolToVis}}" />
 
                     <!-- Empty state overlay -->
                     <StackPanel Grid.Row="1"
@@ -493,15 +526,17 @@
                     </Border>
 
                     <!-- Card grid -->
-                    <ScrollViewer Grid.Row="1"
+                    <ScrollViewer x:Name="MergeScrollViewer"
+                                  Grid.Row="1"
                                   VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled"
+                                  HorizontalScrollBarVisibility="Auto"
                                   Background="{DynamicResource DocumentCanvasBrush}"
                                   Padding="16,16,16,8">
                         <ItemsControl ItemsSource="{Binding MergeQueueItems}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <WrapPanel Orientation="Horizontal" />
+                                    <WrapPanel Orientation="Horizontal"
+                                               Width="{Binding ViewportWidth, ElementName=MergeScrollViewer}" />
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
@@ -671,6 +706,207 @@
                                 </MultiBinding>
                             </TextBlock.Text>
                         </TextBlock>
+                    </Border>
+
+                </Grid>
+            </Border>
+
+            <!-- ── Split Preview Panel (overlays PDF viewer when IsSplitMode = true) ── -->
+            <Border Grid.Column="2"
+                    Panel.ZIndex="20"
+                    Background="{DynamicResource SurfaceBrush}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSplitMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*"    />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Border Grid.Row="0"
+                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="24,16">
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="Split Preview"
+                                           FontFamily="{DynamicResource HeadingFont}"
+                                           FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource OnSurfaceBrush}" />
+                                <TextBlock Text="Check pages to select · ⊕ to zoom · Extract selected to one PDF, or split every page into its own file."
+                                           FontSize="12"
+                                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Content="Select All"
+                                        Style="{StaticResource OutlinedButton}"
+                                        Width="90" Margin="0,0,8,0"
+                                        Command="{Binding SelectAllSplitPagesCommand}" />
+                                <Button Content="Deselect All"
+                                        Style="{StaticResource OutlinedButton}"
+                                        Width="96" Margin="0,0,8,0"
+                                        Command="{Binding DeselectAllSplitPagesCommand}" />
+                                <Button Content="Cancel"
+                                        Style="{StaticResource OutlinedButton}"
+                                        Width="80"
+                                        Command="{Binding CancelSplitModeCommand}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Card grid -->
+                    <ScrollViewer x:Name="SplitScrollViewer"
+                                  Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  Background="{DynamicResource DocumentCanvasBrush}"
+                                  Padding="16,16,16,8">
+                        <ItemsControl ItemsSource="{Binding SplitPreviewItems}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal"
+                                               Width="{Binding ViewportWidth, ElementName=SplitScrollViewer}" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- Card with selection border -->
+                                    <Border Width="155"
+                                            Margin="6,6"
+                                            CornerRadius="6"
+                                            Effect="{StaticResource PageShadow}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource SurfaceContainerLowestBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource OutlineVariantBrush}" />
+                                                <Setter Property="BorderThickness" Value="1" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}" />
+                                                        <Setter Property="BorderThickness" Value="2" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="200" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <!-- Thumbnail area -->
+                                            <Border Grid.Row="0"
+                                                    CornerRadius="5,5,0,0"
+                                                    ClipToBounds="True"
+                                                    Background="{DynamicResource SurfaceContainerLowBrush}">
+                                                <Grid>
+                                                    <!-- Page image -->
+                                                    <Image Source="{Binding ThumbnailBytes, Converter={StaticResource BytesToImage}}"
+                                                           Stretch="Uniform"
+                                                           Margin="4" />
+
+                                                    <!-- Selection tint overlay -->
+                                                    <Border IsHitTestVisible="False">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="Transparent" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="Background" Value="#330078D4" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                    </Border>
+
+                                                    <!-- CheckBox (top-right) -->
+                                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                              HorizontalAlignment="Right"
+                                                              VerticalAlignment="Top"
+                                                              Margin="0,6,6,0"
+                                                              ToolTip="Select this page" />
+
+                                                    <!-- Page number badge (bottom-left) -->
+                                                    <Border HorizontalAlignment="Left"
+                                                            VerticalAlignment="Bottom"
+                                                            Margin="6,0,0,6"
+                                                            Background="#CC000000"
+                                                            CornerRadius="3"
+                                                            Padding="5,2">
+                                                        <TextBlock Text="{Binding PageLabel}"
+                                                                   FontSize="10" FontWeight="Bold"
+                                                                   Foreground="White" />
+                                                    </Border>
+
+                                                    <!-- Zoom button (bottom-right) -->
+                                                    <Button HorizontalAlignment="Right"
+                                                            VerticalAlignment="Bottom"
+                                                            Margin="0,0,6,6"
+                                                            Width="28" Height="28"
+                                                            Content="⊕"
+                                                            FontSize="15"
+                                                            Style="{StaticResource OutlinedButton}"
+                                                            Padding="0"
+                                                            ToolTip="View page larger"
+                                                            Command="{Binding DataContext.ZoomSplitPageCommand,
+                                                                      RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                            CommandParameter="{Binding}" />
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- Page label below thumbnail -->
+                                            <Border Grid.Row="1" Padding="8,6">
+                                                <TextBlock Text="{Binding PageLabel}"
+                                                           FontSize="11" FontWeight="SemiBold"
+                                                           HorizontalAlignment="Center"
+                                                           Foreground="{DynamicResource OnSurfaceBrush}" />
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <!-- Footer -->
+                    <Border Grid.Row="2"
+                            BorderBrush="{DynamicResource OutlineVariantBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="24,10">
+                        <Grid>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock FontSize="12"
+                                           Foreground="{DynamicResource OnSurfaceVariantBrush}">
+                                    <Run Text="{Binding SelectedSplitCount, Mode=OneWay}" />
+                                    <Run Text=" page(s) selected" />
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="Selected → One PDF"
+                                        Style="{StaticResource OutlinedButton}"
+                                        Padding="16,0" Height="36"
+                                        Margin="0,0,8,0"
+                                        ToolTip="Save the checked pages as a single PDF file"
+                                        Command="{Binding ExecuteSplitSelectedCommand}" />
+                                <Button Content="Every Page → Separate File"
+                                        Style="{StaticResource FilledButton}"
+                                        Padding="16,0" Height="36"
+                                        ToolTip="Split all pages — each page becomes its own PDF file"
+                                        Command="{Binding ExecuteSplitAllCommand}" />
+                            </StackPanel>
+                        </Grid>
                     </Border>
 
                 </Grid>

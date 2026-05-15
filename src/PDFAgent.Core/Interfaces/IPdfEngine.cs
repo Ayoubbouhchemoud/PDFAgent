@@ -13,6 +13,13 @@ public interface IPdfEngine : IAsyncDisposable
     Task<OperationResult<IReadOnlyList<PdfTextSegment>>> ExtractTextAsync(int pageNumber, CancellationToken ct = default);
 
     /// <summary>
+    /// Returns the plain text of one page using the already-open document handle.
+    /// Faster and more reliable than ExtractTextAsync for search — no file re-open needed.
+    /// Returns an empty string for pages with no text layer (scanned images).
+    /// </summary>
+    Task<OperationResult<string>> GetPageTextAsync(int pageNumber, CancellationToken ct = default);
+
+    /// <summary>
     /// Opens <paramref name="filePath"/> independently of the currently loaded document,
     /// renders the first page as a thumbnail, and returns the PNG bytes + total page count.
     /// Safe to call while another document is open.

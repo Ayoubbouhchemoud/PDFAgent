@@ -18,8 +18,9 @@ public sealed class TesseractOcrEngine : IOcrEngine
     public TesseractOcrEngine(ILogger<TesseractOcrEngine> logger, string? dataPath = null)
     {
         _logger = logger;
-        _dataPath = dataPath ?? Environment.GetEnvironmentVariable("TESSDATA_PREFIX")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PDFAgent", "tessdata");
+        _dataPath = dataPath
+            ?? Environment.GetEnvironmentVariable("TESSDATA_PREFIX")
+            ?? Path.Combine(AppContext.BaseDirectory, "tessdata");
         Initialize();
     }
 

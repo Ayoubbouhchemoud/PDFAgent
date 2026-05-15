@@ -19,10 +19,23 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
     <PackageReference Include="Serilog" Version="3.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
   </ItemGroup>
+  <!-- Download eng.traineddata for Tesseract OCR on first build if not already present -->
+  <Target Name="DownloadEngTraineddata" AfterTargets="Build"
+          Condition="!Exists('$(OutputPath)tessdata/eng.traineddata')">
+    <MakeDir Directories="$(OutputPath)tessdata" />
+    <DownloadFile
+      SourceUrl="https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+      DestinationFolder="$(OutputPath)tessdata"
+      Retries="2"
+      ContinueOnError="WarnAndContinue" />
+    <Message Text="[OCR] Downloaded eng.traineddata → $(OutputPath)tessdata" Importance="high" />
+  </Target>
+
   <Target Name="CopyPdfiumDll" AfterTargets="Build">
     <ItemGroup>
       <PdfiumDll Include="$(OutputPath)x64\pdfium.dll" />

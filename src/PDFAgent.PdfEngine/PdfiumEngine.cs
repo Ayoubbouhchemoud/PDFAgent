@@ -131,6 +131,11 @@ public sealed class PdfiumEngine : IPdfEngine
                 var height = (int)(pageSize.Height * scale);
 
                 using var image = _document.Render(pageNumber, width, height, (float)dpi, (float)dpi, false);
+                // PdfiumViewer returns a Bitmap with default 96 DPI metadata regardless of
+                // the render DPI. Stamp the correct DPI so WPF displays the image at the
+                // right physical size (816 DIPs wide for a letter page at 150 DPI = 72/96 ratio).
+                if (image is System.Drawing.Bitmap bmp)
+                    bmp.SetResolution((float)dpi, (float)dpi);
                 using var ms = new MemoryStream();
                 image.Save(ms, ImageFormat.Png);
                 return OperationResult.Ok(ms.ToArray());
@@ -188,6 +193,33 @@ public sealed class PdfiumEngine : IPdfEngine
             {
                 _logger.LogError(ex, "Failed to extract text from page {Page}", pageNumber);
                 return OperationResult.Fail<IReadOnlyList<PdfTextSegment>>($"Text extraction failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Returns page text using PdfiumViewer's already-open document handle.
+    /// This is the reliable path for search: no file re-open, no P/Invoke path issues.
+    /// </summary>
+    public async Task<OperationResult<string>> GetPageTextAsync(
+        int pageNumber, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                if (_document == null)
+                    return OperationResult.Fail<string>("No document open");
+                if (pageNumber < 0 || pageNumber >= _document.PageCount)
+                    return OperationResult.Fail<string>($"Page {pageNumber} out of range");
+
+                var text = _document.GetPdfText(pageNumber) ?? string.Empty;
+                return OperationResult.Ok<string>(text);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get page text for page {Page}", pageNumber);
+                return OperationResult.Fail<string>($"GetPageText failed: {ex.Message}");
             }
         }, ct);
     }

@@ -62,12 +62,18 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<MergeQueueItem> MergeQueueItems { get; } = new();
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
+    private bool _isSplitMode;
+
+    public ObservableCollection<SplitPreviewPageItem> SplitPreviewItems { get; } = new();
+    public int SelectedSplitCount => SplitPreviewItems.Count(i => i.IsSelected);
+
+    public event Action<int>? ZoomPageRequested;
+
+    [ObservableProperty]
     private bool _isTextEditMode;
 
     private readonly Stack<string> _undoStack = new();
-
-    [ObservableProperty]
-    private string? _searchText;
 
     public ObservableCollection<ThumbnailItem> Thumbnails { get; } = new();
     public ObservableCollection<RenderedPageItem> RenderedPages { get; } = new();
@@ -102,6 +108,9 @@ public sealed partial class MainViewModel : ObservableObject
     // Cancelled and replaced every time a new document is opened or the engine is closed.
     private CancellationTokenSource _renderCts = new();
 
+    // Separate CTS for text extraction — only cancelled on close/new-open, NOT on zoom/rotate.
+    private CancellationTokenSource _textExtractCts = new();
+
     [RelayCommand]
     private async Task OpenFileAsync(string? filePath = null)
     {
@@ -135,6 +144,7 @@ public sealed partial class MainViewModel : ObservableObject
             TotalPages = result.Value.PageCount;
             CurrentPage = 1;
             ClearUndoStack();
+            OpenedFilePath = filePath;
             StatusText = $"Opened {result.Value.FileName} ({result.Value.PageCount} pages)";
 
             await LoadThumbnailsAsync(ct);
@@ -179,13 +189,16 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _renderCts.Cancel();
         _renderCts = new CancellationTokenSource();
+        _textExtractCts.Cancel();
+        _textExtractCts = new CancellationTokenSource();
 
         if (_pdfEngine.IsOpen)
             await _pdfEngine.CloseAsync();
 
-        DocumentInfo = null;
-        TotalPages   = 0;
-        CurrentPage  = 1;
+        DocumentInfo   = null;
+        OpenedFilePath = null;
+        TotalPages     = 0;
+        CurrentPage    = 1;
 
         RenderedPages.Clear();
         Thumbnails.Clear();
@@ -193,6 +206,13 @@ public sealed partial class MainViewModel : ObservableObject
         IsTextEditMode = false;
         IsMergeMode    = false;
         MergeQueueItems.Clear();
+        IsSplitMode = false;
+        SplitPreviewItems.Clear();
+        IsSearchVisible = false;
+        SearchQuery = null;
+        SearchStatus = string.Empty;
+        SearchHitCount = 0;
+        ClearSearchState();
         StatusText = "Ready";
     }
 
@@ -343,54 +363,119 @@ public sealed partial class MainViewModel : ObservableObject
             MergeQueueItems[i].Index = i + 1;
     }
 
-    [RelayCommand(CanExecute = nameof(DocumentReady))]
-    private async Task SplitAsync()
+    private bool CanSplit() => IsDocumentLoaded && !IsBusy && !IsSplitMode;
+
+    [RelayCommand(CanExecute = nameof(CanSplit))]
+    private void Split()
     {
-        var choice = _fileDialog.ShowSplitDialog(TotalPages);
-        if (choice == null) return;
-
-        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
-        SplitOptions opts;
-
-        switch (choice.Mode)
+        SplitPreviewItems.Clear();
+        foreach (var thumb in Thumbnails)
         {
-            case SplitMode.SplitRange:
+            var item = new SplitPreviewPageItem
             {
-                var pageIndices = Services.PageRangeParser.Parse(choice.PageRange, TotalPages);
-                if (pageIndices.Count == 0)
-                {
-                    StatusText = "Split: no valid pages in range — nothing to do.";
-                    return;
-                }
-                var outputFile = _fileDialog.SavePdf($"{baseName}_extracted.pdf");
-                if (outputFile == null) return;
-                opts = new SplitOptions
-                {
-                    Mode        = SplitMode.SplitRange,
-                    OutputFile  = outputFile,
-                    PageIndices = pageIndices,
-                    BaseName    = baseName,
-                };
-                break;
-            }
+                PageNumber     = thumb.PageNumber,
+                ThumbnailBytes = thumb.Thumbnail,
+            };
+            item.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(SplitPreviewPageItem.IsSelected))
+                    OnPropertyChanged(nameof(SelectedSplitCount));
+            };
+            SplitPreviewItems.Add(item);
+        }
+        IsSplitMode = true;
+        StatusText  = $"{TotalPages} page(s) — check pages to extract, or click Split All.";
+    }
 
-            default:
-            {
-                var outputDir = _fileDialog.SelectFolder();
-                if (outputDir == null) return;
-                opts = new SplitOptions
-                {
-                    Mode      = choice.Mode,
-                    OutputDir = outputDir,
-                    EveryN    = choice.EveryN,
-                    BaseName  = baseName,
-                };
-                break;
-            }
+    [RelayCommand]
+    private void CancelSplitMode()
+    {
+        IsSplitMode = false;
+        SplitPreviewItems.Clear();
+        StatusText = IsDocumentLoaded ? $"{DocumentInfo?.FileName} — {TotalPages} page(s)" : "Ready";
+    }
+
+    [RelayCommand]
+    private void SelectAllSplitPages()
+    {
+        foreach (var item in SplitPreviewItems)
+            item.IsSelected = true;
+        OnPropertyChanged(nameof(SelectedSplitCount));
+    }
+
+    [RelayCommand]
+    private void DeselectAllSplitPages()
+    {
+        foreach (var item in SplitPreviewItems)
+            item.IsSelected = false;
+        OnPropertyChanged(nameof(SelectedSplitCount));
+    }
+
+    [RelayCommand]
+    private void ZoomSplitPage(SplitPreviewPageItem item) =>
+        ZoomPageRequested?.Invoke(item.PageNumber);
+
+    [RelayCommand]
+    private async Task ExecuteSplitSelectedAsync()
+    {
+        var selected = SplitPreviewItems.Where(i => i.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            StatusText = "Select at least one page to extract.";
+            return;
         }
 
-        IsBusy = true;
-        StatusText = "Splitting…";
+        var baseName   = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        var outputFile = _fileDialog.SavePdf($"{baseName}_extracted.pdf");
+        if (outputFile == null) return;
+
+        IsSplitMode = false;
+        SplitPreviewItems.Clear();
+
+        var opts = new SplitOptions
+        {
+            Mode        = SplitMode.SplitRange,
+            OutputFile  = outputFile,
+            PageIndices = selected.Select(i => i.PageNumber - 1).ToList(),
+            BaseName    = baseName,
+        };
+
+        IsBusy     = true;
+        StatusText = $"Extracting {selected.Count} page(s)…";
+        try
+        {
+            var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, opts);
+            StatusText = result.IsSuccess
+                ? $"Extracted {selected.Count} page(s) → {Path.GetFileName(outputFile)}"
+                : $"Extract failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ExecuteSplitSelected failed");
+            StatusText = $"Extract error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    [RelayCommand]
+    private async Task ExecuteSplitAllAsync()
+    {
+        var outputDir = _fileDialog.SelectFolder();
+        if (outputDir == null) return;
+
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        IsSplitMode = false;
+        SplitPreviewItems.Clear();
+
+        var opts = new SplitOptions
+        {
+            Mode      = SplitMode.SplitAll,
+            OutputDir = outputDir,
+            BaseName  = baseName,
+        };
+
+        IsBusy     = true;
+        StatusText = $"Splitting {TotalPages} page(s)…";
         try
         {
             var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, opts);
@@ -400,10 +485,17 @@ public sealed partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Split failed");
+            _logger.LogError(ex, "ExecuteSplitAll failed");
             StatusText = $"Split error: {ex.Message}";
         }
         finally { IsBusy = false; }
+    }
+
+    public async Task<byte[]?> RenderPageForZoomAsync(int pageIndex)
+    {
+        if (!_pdfEngine.IsOpen) return null;
+        var result = await _pdfEngine.RenderPageAsync(pageIndex, dpi: 200);
+        return result.IsSuccess ? result.Value : null;
     }
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
@@ -575,10 +667,37 @@ public sealed partial class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
-    public event EventHandler? SignRequested;
+    public event EventHandler?    SignRequested;
+    // Fired after any in-place PDF modification is saved and the engine re-opened.
+    // MainWindow handles this by reloading WebView2 so the viewer shows the updated file.
+    public event Action?          ViewerRefreshRequested;
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private void Sign() => SignRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
+    /// Places a signature image on the specified page at the chosen preset position,
+    /// then overwrites the file and triggers a WebView2 reload.
+    /// Called directly from the placement dialog — replaces the old sticker overlay path.
+    /// </summary>
+    public async Task PlaceSignatureAsync(
+        byte[] signatureBytes,
+        int pageNumber,
+        SignaturePlacement placement,
+        double signatureWidthPts  = 200,
+        double signatureHeightPts = 80)
+    {
+        var opts = new SignatureOverlayOptions
+        {
+            ImageBytes      = signatureBytes,
+            PageNumber      = pageNumber,
+            Placement       = placement,
+            SignatureWidth  = signatureWidthPts,
+            SignatureHeight = signatureHeightPts,
+            Margin          = 36,
+        };
+        await ApplySignatureAsync(opts);
+    }
 
     public async Task<byte[]?> RenderPagePreviewAsync(int pageIndex)
     {
@@ -640,6 +759,8 @@ public sealed partial class MainViewModel : ObservableObject
                     TotalPages   = reopen.Value.PageCount;
                     await LoadThumbnailsAsync(ct);
                     await RenderCurrentPagesAsync(ct, finalStatus: failureStatus);
+                    if (failureStatus == null)
+                        ViewerRefreshRequested?.Invoke();
                 }
             }
             catch (Exception ex)
@@ -1204,9 +1325,32 @@ public sealed partial class MainViewModel : ObservableObject
     {
         RenderedPages.Clear();
 
+        // Fetch page dimensions for accurate coordinate mapping
+        var pageSizes = new (double W, double H)[TotalPages];
+        for (var i = 0; i < TotalPages; i++)
+        {
+            try
+            {
+                var info = await _pdfEngine.GetPageAsync(i, ct);
+                if (info.IsSuccess && info.Value != null)
+                    pageSizes[i] = (info.Value.WidthPoints, info.Value.HeightPoints);
+                else
+                    pageSizes[i] = (595, 842); // fallback to letter
+            }
+            catch
+            {
+                pageSizes[i] = (595, 842);
+            }
+        }
+
         // Create all placeholders immediately so the viewer shows document structure at once.
         for (var i = 0; i < TotalPages; i++)
-            RenderedPages.Add(new RenderedPageItem { PageNumber = i + 1 });
+            RenderedPages.Add(new RenderedPageItem
+            {
+                PageNumber = i + 1,
+                PageWidthPoints = pageSizes[i].W,
+                PageHeightPoints = pageSizes[i].H,
+            });
 
         // Render each page and update the placeholder when it arrives.
         for (var i = 0; i < TotalPages; i++)
@@ -1227,7 +1371,44 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         if (!ct.IsCancellationRequested)
+        {
             StatusText = finalStatus ?? $"{DocumentInfo?.FileName} — {TotalPages} page(s)";
+
+            // Cancel any prior extraction (e.g. from a previous zoom/rotate) and start fresh.
+            // We use a dedicated CTS so zoom/rotate re-renders don't kill an in-progress extraction.
+            _textExtractCts.Cancel();
+            _textExtractCts = new CancellationTokenSource();
+            _ = ExtractAllTextLayersAsync(_textExtractCts.Token);
+        }
+    }
+
+    private async Task ExtractAllTextLayersAsync(CancellationToken ct)
+    {
+        var totalWords = 0;
+        for (var i = 0; i < TotalPages; i++)
+        {
+            if (ct.IsCancellationRequested || i >= RenderedPages.Count) return;
+            try
+            {
+                var result = await _pdfEngine.ExtractTextAsync(i, ct);
+                if (!ct.IsCancellationRequested && i < RenderedPages.Count &&
+                    result.IsSuccess && result.Value != null)
+                {
+                    RenderedPages[i].TextLayer = result.Value;
+                    totalWords += result.Value.Count;
+                }
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { _logger.LogWarning(ex, "Text extraction failed for page {Page}", i + 1); }
+        }
+
+        if (!ct.IsCancellationRequested)
+        {
+            var name = DocumentInfo?.FileName ?? "Document";
+            StatusText = totalWords > 0
+                ? $"{name} — {TotalPages} page(s) — {totalWords} words (drag to select text)"
+                : $"{name} — {TotalPages} page(s) — Scanned PDF: no text layer (run OCR for text selection)";
+        }
     }
 }
 
@@ -1246,15 +1427,23 @@ public sealed partial class RenderedPageItem : CommunityToolkit.Mvvm.ComponentMo
 {
     public int PageNumber { get; init; }
 
+    /// <summary>Page dimensions in PDF points (1/72 inch).</summary>
+    public double PageWidthPoints { get; init; }
+    public double PageHeightPoints { get; init; }
+
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
     private byte[]? _imageData;
 
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
     private bool _isTextEditModeActive;
 
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private System.Collections.Generic.IReadOnlyList<PDFAgent.Core.Models.PdfTextSegment>? _textLayer;
+
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.StickerViewModel>        Stickers        { get; } = new();
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextAnnotationViewModel> TextAnnotations { get; } = new();
     public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextEditWordViewModel>   EditableWords   { get; } = new();
+    public System.Collections.ObjectModel.ObservableCollection<SearchHighlightRect>                             SearchHighlights { get; } = new();
 }
 
 public sealed partial class MergeQueueItem : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
@@ -1300,4 +1489,16 @@ public sealed partial class MergeQueueItem : CommunityToolkit.Mvvm.ComponentMode
 
     partial void OnPageCountChanged(int value) =>
         OnPropertyChanged(nameof(PageCountLabel));
+}
+
+public sealed partial class SplitPreviewPageItem : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
+{
+    public int PageNumber { get; init; }
+    public string PageLabel => $"Page {PageNumber}";
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private byte[]? _thumbnailBytes;
+
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private bool _isSelected;
 }
