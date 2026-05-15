@@ -24,14 +24,12 @@ public sealed class PdfiumEditor : IPdfEditor
             var tempFiles = new List<string>();
             try
             {
-                using var output = new PdfDocument();
+                // Resolve Word documents to temporary PDFs first.
+                var pdfPaths = new List<string>(filePaths.Count);
                 foreach (var fp in filePaths)
                 {
                     ct.ThrowIfCancellationRequested();
-
-                    var ext     = Path.GetExtension(fp).ToLowerInvariant();
-                    var pdfPath = fp;
-
+                    var ext = Path.GetExtension(fp).ToLowerInvariant();
                     if (ext is ".doc" or ".docx")
                     {
                         var converted = WordConverter.ConvertToPdf(fp);
@@ -40,15 +38,20 @@ public sealed class PdfiumEditor : IPdfEditor
                                 $"Could not convert '{Path.GetFileName(fp)}'. " +
                                 "Ensure Microsoft Word is installed.");
                         tempFiles.Add(converted);
-                        pdfPath = converted;
+                        pdfPaths.Add(converted);
                     }
-
-                    using var input = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Import);
-                    for (var i = 0; i < input.PageCount; i++)
-                        output.AddPage(input.Pages[i]);
+                    else
+                    {
+                        pdfPaths.Add(fp);
+                    }
                 }
 
-                output.Save(outputPath);
+                ct.ThrowIfCancellationRequested();
+
+                // Use PDFium directly — handles all PDF versions including
+                // cross-reference streams that PdfSharp cannot import.
+                PdfiumMergeNative.MergeFiles(pdfPaths, outputPath);
+
                 _logger.LogInformation("Merged {Count} files → {Output}", filePaths.Count, outputPath);
                 return OperationResult.Ok($"Merged {filePaths.Count} files");
             }

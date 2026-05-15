@@ -10,8 +10,7 @@ namespace PDFAgent.PdfEngine;
 /// </summary>
 internal static class PdfiumTextNative
 {
-    // Shared with PdfiumViewer's internal lock key (best-effort; avoids crash on concurrent access)
-    private static readonly object _lock = new();
+    private static readonly object _lock = PdfiumSharedLock.Instance;
 
     // ── PDFium P/Invoke ───────────────────────────────────────────────────────
 
