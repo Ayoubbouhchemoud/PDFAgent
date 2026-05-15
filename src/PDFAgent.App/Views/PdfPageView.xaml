@@ -53,5 +53,8 @@
         <!-- Text-annotation canvas — children positioned absolutely -->
         <Canvas x:Name="TextCanvas" />
 
+        <!-- Word-highlight canvas — shown only in text-edit mode -->
+        <Canvas x:Name="WordsCanvas" />
+
     </Grid>
 </UserControl>

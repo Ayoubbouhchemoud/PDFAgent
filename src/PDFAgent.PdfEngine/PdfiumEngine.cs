@@ -178,24 +178,11 @@ public sealed class PdfiumEngine : IPdfEngine
         {
             try
             {
-                if (_document == null)
+                if (_document == null || string.IsNullOrEmpty(FilePath))
                     return OperationResult.Fail<IReadOnlyList<PdfTextSegment>>("No document open");
 
-                var text = _document.GetPdfText(pageNumber);
-                var segments = new List<PdfTextSegment>();
-
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    segments.Add(new PdfTextSegment
-                    {
-                        Text = text,
-                        PageNumber = pageNumber + 1,
-                        SegmentIndex = 0,
-                        Width = _document.PageSizes[pageNumber].Width,
-                    });
-                }
-
-                return OperationResult.Ok<IReadOnlyList<PdfTextSegment>>(segments);
+                var words = PdfiumTextNative.ExtractWords(FilePath, pageNumber);
+                return OperationResult.Ok<IReadOnlyList<PdfTextSegment>>(words);
             }
             catch (Exception ex)
             {

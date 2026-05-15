@@ -19,6 +19,9 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
     [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
     [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     private bool _isDocumentLoaded;
 
     [ObservableProperty]

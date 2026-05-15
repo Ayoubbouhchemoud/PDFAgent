@@ -121,6 +121,20 @@ public sealed class FileDialogService : IFileDialogService
             MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    public IReadOnlyList<string>? ShowMergeDialog(IEnumerable<string> initialFiles)
+    {
+        var dialog = new Views.MergeDialog();
+        dialog.PreloadFiles(initialFiles);
+        return dialog.ShowDialog() == true ? dialog.OrderedFiles : null;
+    }
+
+    public SplitDialogResult? ShowSplitDialog(int totalPages)
+    {
+        var dialog = new Views.SplitDialog();
+        if (dialog.ShowDialog() != true) return null;
+        return new SplitDialogResult(dialog.SelectedMode, dialog.PageRange, dialog.EveryN);
+    }
+
     public RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages)
     {
         var dialog = new Views.RotateOptionsDialog();

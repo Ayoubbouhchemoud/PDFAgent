@@ -120,7 +120,12 @@ public sealed class BatchWorkflowService : IBatchWorkflowService
 
             case WorkflowStepType.ExtractPages:
                 return await _pdfEditor.SplitAsync(docPath,
-                    Path.Combine(dir, $"{baseName}_pages"), SplitMode.SplitAll, ct);
+                    new SplitOptions
+                    {
+                        Mode      = SplitMode.SplitAll,
+                        OutputDir = Path.Combine(dir, $"{baseName}_pages"),
+                        BaseName  = baseName,
+                    }, ct);
 
             case WorkflowStepType.MergeFiles:
                 return OperationResult.Ok("Merge: open multiple PDFs via the toolbar Merge button — step skipped");

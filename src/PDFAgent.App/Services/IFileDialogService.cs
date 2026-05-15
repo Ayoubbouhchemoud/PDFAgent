@@ -1,3 +1,4 @@
+using PDFAgent.Core.Interfaces;
 using PDFAgent.Core.Models;
 
 namespace PDFAgent.App.Services;
@@ -15,11 +16,18 @@ public interface IFileDialogService
     void ShowProperties(PdfDocumentInfo info);
     void PrintFile(string filePath);
 
-    /// <summary>
-    /// Shows the Rotate Options dialog.
-    /// Returns the user's choices, or null if the dialog was cancelled.
-    /// </summary>
+    /// <summary>Shows the Rotate Options dialog. Returns null if cancelled.</summary>
     RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages);
+
+    /// <summary>Shows the Split dialog. Returns null if cancelled.</summary>
+    SplitDialogResult? ShowSplitDialog(int totalPages);
+
+    /// <summary>
+    /// Shows the Merge dialog pre-populated with <paramref name="initialFiles"/>.
+    /// Returns the ordered list of file paths, or null if cancelled.
+    /// The caller must then ask for an output path via <see cref="SavePdf"/>.
+    /// </summary>
+    IReadOnlyList<string>? ShowMergeDialog(IEnumerable<string> initialFiles);
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
@@ -29,3 +37,9 @@ public sealed record RotateDialogResult(
     int Degrees);
 
 public enum RotatePageSelection { All, CurrentPage, Range }
+
+/// <summary>Result returned by the Split dialog.</summary>
+public sealed record SplitDialogResult(
+    SplitMode Mode,
+    string PageRange,
+    int EveryN);

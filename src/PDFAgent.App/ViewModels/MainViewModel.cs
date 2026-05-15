@@ -49,7 +49,15 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ExportToImageCommand))]
     [NotifyCanExecuteChangedFor(nameof(PrintCommand))]
     [NotifyCanExecuteChangedFor(nameof(PropertiesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     private bool _isBusy;
+
+    [ObservableProperty]
+    private bool _isTextEditMode;
+
+    private readonly Stack<string> _undoStack = new();
 
     [ObservableProperty]
     private string? _searchText;
@@ -119,6 +127,7 @@ public sealed partial class MainViewModel : ObservableObject
             DocumentInfo = result.Value;
             TotalPages = result.Value.PageCount;
             CurrentPage = 1;
+            ClearUndoStack();
             StatusText = $"Opened {result.Value.FileName} ({result.Value.PageCount} pages)";
 
             await LoadThumbnailsAsync(ct);
@@ -163,27 +172,38 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task MergeAsync()
     {
-        var files = _fileDialog.OpenMultiplePdfs();
-        if (files.Count == 0)
-        {
-            StatusText = "Merge cancelled.";
-            return;
-        }
-        if (files.Count < 2)
-        {
-            StatusText = "Merge requires at least 2 PDF files. Please select 2 or more.";
-            return;
-        }
+        // Pre-populate with the currently open file so it's the default first entry.
+        var initial = _pdfEngine.IsOpen ? new[] { _pdfEngine.FilePath } : Array.Empty<string>();
 
-        var output = _fileDialog.SavePdf("merged.pdf");
+        var orderedFiles = _fileDialog.ShowMergeDialog(initial);
+        if (orderedFiles == null || orderedFiles.Count < 2) return;
+
+        var baseName = orderedFiles.Count == 1
+            ? Path.GetFileNameWithoutExtension(orderedFiles[0])
+            : "merged";
+        var output = _fileDialog.SavePdf($"{baseName}_merged.pdf");
         if (output == null) return;
 
         IsBusy = true;
-        StatusText = "Merging PDFs…";
+        StatusText = $"Merging {orderedFiles.Count} files…";
         try
         {
-            var result = await _pdfEditor.MergeAsync(files, output);
-            StatusText = result.IsSuccess ? $"Merge complete — {result.Message}" : $"Merge failed: {result.Message}";
+            var result = await _pdfEditor.MergeAsync(orderedFiles, output);
+            if (result.IsSuccess)
+            {
+                StatusText = $"Merge complete — {result.Message}";
+                // Open the merged result automatically.
+                await OpenFileAsync(output);
+            }
+            else
+            {
+                StatusText = $"Merge failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Merge failed");
+            StatusText = $"Merge error: {ex.Message}";
         }
         finally { IsBusy = false; }
     }
@@ -191,15 +211,62 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task SplitAsync()
     {
-        var dir = _fileDialog.SelectFolder();
-        if (dir == null) return;
+        var choice = _fileDialog.ShowSplitDialog(TotalPages);
+        if (choice == null) return;
+
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        SplitOptions opts;
+
+        switch (choice.Mode)
+        {
+            case SplitMode.SplitRange:
+            {
+                var pageIndices = Services.PageRangeParser.Parse(choice.PageRange, TotalPages);
+                if (pageIndices.Count == 0)
+                {
+                    StatusText = "Split: no valid pages in range — nothing to do.";
+                    return;
+                }
+                var outputFile = _fileDialog.SavePdf($"{baseName}_extracted.pdf");
+                if (outputFile == null) return;
+                opts = new SplitOptions
+                {
+                    Mode        = SplitMode.SplitRange,
+                    OutputFile  = outputFile,
+                    PageIndices = pageIndices,
+                    BaseName    = baseName,
+                };
+                break;
+            }
+
+            default:
+            {
+                var outputDir = _fileDialog.SelectFolder();
+                if (outputDir == null) return;
+                opts = new SplitOptions
+                {
+                    Mode      = choice.Mode,
+                    OutputDir = outputDir,
+                    EveryN    = choice.EveryN,
+                    BaseName  = baseName,
+                };
+                break;
+            }
+        }
 
         IsBusy = true;
         StatusText = "Splitting…";
         try
         {
-            var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, dir, SplitMode.SplitAll);
-            StatusText = result.IsSuccess ? $"Split complete — {result.Message}" : $"Split failed: {result.Message}";
+            var result = await _pdfEditor.SplitAsync(_pdfEngine.FilePath, opts);
+            StatusText = result.IsSuccess
+                ? $"Split complete — {result.Message}"
+                : $"Split failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Split failed");
+            StatusText = $"Split error: {ex.Message}";
         }
         finally { IsBusy = false; }
     }
@@ -230,15 +297,21 @@ public sealed partial class MainViewModel : ObservableObject
         StatusText = $"Rotating {pages.Count} page(s) by {opts.Degrees}°…";
         var path = _pdfEngine.FilePath;
         string? failureStatus = null;
+        string? undoSnap = null;
         try
         {
             // PdfiumViewer holds an exclusive lock on the file.
             // Close it first so PdfSharp can overwrite it, then reopen.
+            undoSnap = MakeUndoSnapshot();
             await _pdfEngine.CloseAsync();
 
             var result = await _pdfEditor.RotatePagesAsync(path, pages, opts.Degrees);
             if (result.IsSuccess)
+            {
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
                 StatusText = $"Rotation complete — {result.Message}";
+            }
             else
                 failureStatus = StatusText = $"Rotation failed: {result.Message}";
         }
@@ -270,6 +343,8 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 _logger.LogError(ex, "Failed to reopen file after rotate");
             }
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
+            UndoCommand.NotifyCanExecuteChanged();
             IsBusy = false;
         }
     }
@@ -382,12 +457,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (!_pdfEngine.IsOpen) return;
         var path = _pdfEngine.FilePath;
         var tmp  = Path.GetTempFileName();
+        string? undoSnap = null;
         IsBusy = true;
         StatusText = "Applying signature…";
         string? failureStatus = null;
 
         try
         {
+            undoSnap = MakeUndoSnapshot();
             // Release the file lock so PdfSharp can open the same file.
             await _pdfEngine.CloseAsync();
 
@@ -396,6 +473,8 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 File.Move(tmp, path, overwrite: true);
                 tmp = null;
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
                 _logger.LogInformation("Signature applied → {Path}", path);
             }
             else
@@ -410,6 +489,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         finally
         {
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
             if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
 
             // Always reopen — same pattern as RotateAsync.
@@ -434,6 +514,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
 
             if (failureStatus == null) StatusText = "Signature applied";
+            UndoCommand.NotifyCanExecuteChanged();
             IsBusy = false;
         }
     }
@@ -466,13 +547,20 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (sticker.ParentPage == null || !_pdfEngine.IsOpen) return;
 
-        const double ratio = 72.0 / 150.0;   // image-px at 150 DPI → PDF points
+        // PdfiumViewer embeds the render DPI in the PNG, so WPF displays the image at
+        // pixelWidth * (96 / renderDpi) DIPs.  Canvas coordinates are therefore WPF DIPs
+        // (96 DPI reference), and the conversion to PDF points is 72/96 = 0.75.
+        // The sticker outer Border starts at vm.Y, but its first row is the 30-DIP toolbar;
+        // the signature image itself lives in the second row, so Y must be offset by 30 DIPs.
+        const double ratio       = 72.0 / 96.0;   // WPF DIPs → PDF points
+        const double toolbarDips = 30.0;           // toolbar row height in DIPs
+
         var opts = new SignatureOverlayOptions
         {
             ImageBytes      = sticker.Bytes,
             PageNumber      = sticker.ParentPage.PageNumber,
             AbsoluteX       = sticker.X * ratio,
-            AbsoluteY       = sticker.Y * ratio,
+            AbsoluteY       = (sticker.Y + toolbarDips) * ratio,
             SignatureWidth  = sticker.Width  * ratio,
             SignatureHeight = sticker.Height * ratio,
         };
@@ -492,10 +580,10 @@ public sealed partial class MainViewModel : ObservableObject
                 .Select(a => new TextAnnotationRecord
                 {
                     PageNumber = p.PageNumber,
-                    X          = a.X      * (72.0 / 150.0),
-                    Y          = a.Y      * (72.0 / 150.0),
-                    Width      = a.Width  * (72.0 / 150.0),
-                    Height     = a.Height * (72.0 / 150.0),
+                    X          = a.X              * (72.0 / 96.0),
+                    Y          = (a.Y + 22.0)     * (72.0 / 96.0),   // +22 for header bar
+                    Width      = a.Width           * (72.0 / 96.0),
+                    Height     = a.Height          * (72.0 / 96.0),
                     Text       = a.Text,
                     FontSize   = a.FontSize,
                 }))
@@ -509,17 +597,21 @@ public sealed partial class MainViewModel : ObservableObject
 
         var path = _pdfEngine.FilePath;
         var tmp  = Path.GetTempFileName();
+        string? undoSnap = null;
         IsBusy = true;
         StatusText = "Applying text edits…";
         string? failureStatus = null;
         try
         {
+            undoSnap = MakeUndoSnapshot();
             await _pdfEngine.CloseAsync();
             var result = await _pdfEditor.BakeTextAnnotationsAsync(path, tmp, records);
             if (result.IsSuccess)
             {
                 File.Move(tmp, path, overwrite: true);
                 tmp = null;
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
             }
             else
             {
@@ -533,6 +625,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         finally
         {
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
             if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
             _renderCts.Cancel();
             _renderCts = new CancellationTokenSource();
@@ -554,8 +647,73 @@ public sealed partial class MainViewModel : ObservableObject
                 _logger.LogError(ex, "Reopen after BakeText failed");
             }
             if (failureStatus == null) StatusText = "Text edits applied";
+            UndoCommand.NotifyCanExecuteChanged();
             IsBusy = false;
         }
+    }
+
+    // ── Undo ─────────────────────────────────────────────────────────────────
+
+    private bool CanUndo() => IsDocumentLoaded && !IsBusy && _undoStack.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private async Task UndoAsync()
+    {
+        if (!_undoStack.TryPop(out var snap) || !_pdfEngine.IsOpen) return;
+
+        var path = _pdfEngine.FilePath;
+        IsBusy = true;
+        StatusText = "Undoing…";
+        try
+        {
+            await _pdfEngine.CloseAsync();
+            File.Copy(snap, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Undo copy failed");
+            _undoStack.Push(snap);   // restore so the entry isn't lost
+            StatusText = $"Undo failed: {ex.Message}";
+            snap = null;             // don't delete the file we failed to restore from
+        }
+        finally
+        {
+            try { if (snap != null && File.Exists(snap)) File.Delete(snap); } catch { }
+        }
+
+        _renderCts.Cancel();
+        _renderCts = new CancellationTokenSource();
+        var ct = _renderCts.Token;
+        try
+        {
+            var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+            if (reopen.IsSuccess && reopen.Value != null)
+            {
+                DocumentInfo = reopen.Value;
+                TotalPages   = reopen.Value.PageCount;
+                await LoadThumbnailsAsync(ct);
+                await RenderCurrentPagesAsync(ct);
+                StatusText = "Undo complete";
+            }
+        }
+        catch (Exception ex) { _logger.LogError(ex, "Undo reopen failed"); }
+
+        UndoCommand.NotifyCanExecuteChanged();
+        IsBusy = false;
+    }
+
+    private string MakeUndoSnapshot()
+    {
+        var snap = Path.Combine(Path.GetTempPath(), $"pdfagent_undo_{Guid.NewGuid():N}.pdf");
+        File.Copy(_pdfEngine.FilePath, snap);
+        return snap;
+    }
+
+    private void ClearUndoStack()
+    {
+        while (_undoStack.TryPop(out var snap))
+            try { if (File.Exists(snap)) File.Delete(snap); } catch { }
+        UndoCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
@@ -625,6 +783,171 @@ public sealed partial class MainViewModel : ObservableObject
     private void Properties()
     {
         _fileDialog.ShowProperties(DocumentInfo!);
+    }
+
+    // ── Text Editing ────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ToggleTextEditModeAsync()
+    {
+        IsTextEditMode = !IsTextEditMode;
+
+        if (IsTextEditMode)
+        {
+            StatusText = "Loading text…";
+            IsBusy = true;
+            try
+            {
+                // Extract words for every rendered page in parallel
+                const double ratio = 96.0 / 72.0;   // PDF pts → canvas DIPs
+                var tasks = RenderedPages.Select(async pageItem =>
+                {
+                    var result = await _pdfEngine.ExtractTextAsync(pageItem.PageNumber - 1);
+                    return (pageItem, result);
+                }).ToList();
+
+                var results = await Task.WhenAll(tasks);
+
+                foreach (var (pageItem, result) in results)
+                {
+                    pageItem.EditableWords.Clear();
+                    if (!result.IsSuccess || result.Value == null) continue;
+
+                    int idx = 0;
+                    foreach (var seg in result.Value)
+                    {
+                        pageItem.EditableWords.Add(new TextEditWordViewModel
+                        {
+                            CanvasX      = seg.X * ratio,
+                            CanvasY      = seg.Y * ratio,
+                            CanvasWidth  = seg.Width  * ratio,
+                            CanvasHeight = seg.Height * ratio,
+                            PdfX         = seg.X,
+                            PdfY         = seg.Y,
+                            PdfWidth     = seg.Width,
+                            PdfHeight    = seg.Height,
+                            OriginalText = seg.Text,
+                            EditedText   = seg.Text,
+                            FontSize     = seg.FontSize,
+                        });
+                        idx++;
+                    }
+
+                    pageItem.IsTextEditModeActive = true;
+                }
+
+                var totalWords = RenderedPages.Sum(p => p.EditableWords.Count);
+                StatusText = totalWords > 0
+                    ? $"Text edit mode — {totalWords} words detected. Click a word to edit."
+                    : "Text edit mode — no selectable text found on these pages.";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load text for editing");
+                StatusText = $"Text load error: {ex.Message}";
+                IsTextEditMode = false;
+            }
+            finally { IsBusy = false; }
+        }
+        else
+        {
+            // Exit text edit mode — clear word overlays
+            foreach (var pageItem in RenderedPages)
+            {
+                pageItem.IsTextEditModeActive = false;
+                pageItem.EditableWords.Clear();
+            }
+            ApplyTextEditsCommand.NotifyCanExecuteChanged();
+            StatusText = $"{DocumentInfo?.FileName} — {TotalPages} page(s)";
+        }
+    }
+
+    private bool CanApplyTextEdits() =>
+        IsDocumentLoaded && !IsBusy && IsTextEditMode &&
+        RenderedPages.Any(p => p.EditableWords.Any(w => w.IsEdited));
+
+    [RelayCommand(CanExecute = nameof(CanApplyTextEdits))]
+    private async Task ApplyTextEditsAsync()
+    {
+        var edits = RenderedPages
+            .SelectMany(p => p.EditableWords
+                .Where(w => w.IsEdited)
+                .Select(w => new PDFAgent.Core.Models.TextEditRecord
+                {
+                    PageNumber = p.PageNumber,
+                    X          = w.PdfX,
+                    Y          = w.PdfY,
+                    Width      = w.PdfWidth,
+                    Height     = w.PdfHeight,
+                    NewText    = w.EditedText,
+                    FontSize   = w.FontSize,
+                }))
+            .ToList();
+
+        if (edits.Count == 0)
+        {
+            StatusText = "No text changes to apply.";
+            return;
+        }
+
+        var path = _pdfEngine.FilePath;
+        var tmp  = Path.GetTempFileName();
+        string? undoSnap = null;
+        IsBusy = true;
+        StatusText = $"Applying {edits.Count} text edit(s)…";
+        string? failStatus = null;
+
+        try
+        {
+            undoSnap = MakeUndoSnapshot();
+            await _pdfEngine.CloseAsync();
+
+            var result = await _pdfEditor.BakeTextEditsAsync(path, tmp, edits);
+            if (result.IsSuccess)
+            {
+                File.Move(tmp, path, overwrite: true);
+                tmp = null;
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
+                UndoCommand.NotifyCanExecuteChanged();
+            }
+            else
+            {
+                failStatus = $"Text edit failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ApplyTextEdits failed");
+            failStatus = $"Text edit error: {ex.Message}";
+        }
+        finally
+        {
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
+            if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+
+            IsTextEditMode = false;
+            foreach (var p in RenderedPages) { p.IsTextEditModeActive = false; p.EditableWords.Clear(); }
+
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+                    await LoadThumbnailsAsync(ct);
+                    await RenderCurrentPagesAsync(ct, finalStatus: failStatus);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _logger.LogError(ex, "Reopen after text edit failed"); }
+
+            IsBusy = false;
+        }
     }
 
     // ── Rendering ───────────────────────────────────────────────────────────
@@ -704,6 +1027,10 @@ public sealed partial class RenderedPageItem : CommunityToolkit.Mvvm.ComponentMo
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
     private byte[]? _imageData;
 
-    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.StickerViewModel>         Stickers         { get; } = new();
-    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextAnnotationViewModel>  TextAnnotations  { get; } = new();
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty]
+    private bool _isTextEditModeActive;
+
+    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.StickerViewModel>        Stickers        { get; } = new();
+    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextAnnotationViewModel> TextAnnotations { get; } = new();
+    public System.Collections.ObjectModel.ObservableCollection<PDFAgent.App.ViewModels.TextEditWordViewModel>   EditableWords   { get; } = new();
 }

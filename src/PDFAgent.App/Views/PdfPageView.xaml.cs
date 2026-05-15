@@ -18,6 +18,7 @@ public partial class PdfPageView : UserControl
     // Tracks which WPF element belongs to which ViewModel so we can remove them.
     private readonly Dictionary<StickerViewModel, FrameworkElement>        _stickerElements    = new();
     private readonly Dictionary<TextAnnotationViewModel, FrameworkElement> _annotationElements = new();
+    private readonly Dictionary<TextEditWordViewModel, FrameworkElement>   _wordElements       = new();
 
     public PdfPageView()
     {
@@ -35,20 +36,46 @@ public partial class PdfPageView : UserControl
         {
             old.Stickers.CollectionChanged        -= OnStickersChanged;
             old.TextAnnotations.CollectionChanged -= OnTextAnnotationsChanged;
+            old.EditableWords.CollectionChanged   -= OnEditableWordsChanged;
+            old.PropertyChanged                   -= OnPageItemPropertyChanged;
         }
 
         StickerCanvas.Children.Clear();
         TextCanvas.Children.Clear();
+        WordsCanvas.Children.Clear();
         _stickerElements.Clear();
         _annotationElements.Clear();
+        _wordElements.Clear();
 
         if (e.NewValue is RenderedPageItem item)
         {
             item.Stickers.CollectionChanged        += OnStickersChanged;
             item.TextAnnotations.CollectionChanged += OnTextAnnotationsChanged;
+            item.EditableWords.CollectionChanged   += OnEditableWordsChanged;
+            item.PropertyChanged                   += OnPageItemPropertyChanged;
 
             foreach (var s  in item.Stickers)        AddStickerElement(s);
             foreach (var ta in item.TextAnnotations) AddTextAnnotationElement(ta);
+
+            if (item.IsTextEditModeActive)
+                foreach (var w in item.EditableWords) AddWordElement(w);
+        }
+    }
+
+    private void OnPageItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(RenderedPageItem.IsTextEditModeActive)) return;
+        var item = PageItem;
+        if (item == null) return;
+
+        if (item.IsTextEditModeActive)
+        {
+            foreach (var w in item.EditableWords) AddWordElement(w);
+        }
+        else
+        {
+            WordsCanvas.Children.Clear();
+            _wordElements.Clear();
         }
     }
 
@@ -266,6 +293,135 @@ public partial class PdfPageView : UserControl
     {
         if (_annotationElements.Remove(vm, out var elem))
             TextCanvas.Children.Remove(elem);
+    }
+
+    // ── EditableWords collection ──────────────────────────────────────────────
+
+    private void OnEditableWordsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!(PageItem?.IsTextEditModeActive ?? false)) return;
+
+        if (e.NewItems != null)
+            foreach (TextEditWordViewModel vm in e.NewItems) AddWordElement(vm);
+
+        if (e.OldItems != null)
+            foreach (TextEditWordViewModel vm in e.OldItems) RemoveWordElement(vm);
+    }
+
+    private void AddWordElement(TextEditWordViewModel vm)
+    {
+        // Semi-transparent blue highlight rectangle
+        var rect = new Border
+        {
+            Width           = Math.Max(vm.CanvasWidth, 4),
+            Height          = Math.Max(vm.CanvasHeight, 8),
+            Background      = new SolidColorBrush(Color.FromArgb(40, 0, 120, 215)),
+            BorderBrush     = new SolidColorBrush(Color.FromArgb(120, 0, 100, 200)),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(2),
+            Cursor          = Cursors.IBeam,
+            ToolTip         = vm.OriginalText,
+        };
+
+        Canvas.SetLeft(rect, vm.CanvasX);
+        Canvas.SetTop(rect,  vm.CanvasY);
+        WordsCanvas.Children.Add(rect);
+        _wordElements[vm] = rect;
+
+        rect.MouseLeftButtonDown += (s, e) =>
+        {
+            e.Handled = true;
+            OpenWordEditor(vm, rect);
+        };
+
+        // Color overlay changes when word has been edited
+        vm.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(TextEditWordViewModel.EditedText)) return;
+            rect.Background = vm.IsEdited
+                ? new SolidColorBrush(Color.FromArgb(70, 0, 180, 80))
+                : new SolidColorBrush(Color.FromArgb(40, 0, 120, 215));
+            rect.BorderBrush = vm.IsEdited
+                ? new SolidColorBrush(Color.FromArgb(160, 0, 160, 60))
+                : new SolidColorBrush(Color.FromArgb(120, 0, 100, 200));
+        };
+    }
+
+    private void RemoveWordElement(TextEditWordViewModel vm)
+    {
+        if (_wordElements.Remove(vm, out var elem))
+            WordsCanvas.Children.Remove(elem);
+    }
+
+    private void OpenWordEditor(TextEditWordViewModel vm, Border highlightRect)
+    {
+        // Remove existing editor if any
+        if (WordsCanvas.Tag is FrameworkElement existing)
+        {
+            WordsCanvas.Children.Remove(existing);
+            WordsCanvas.Tag = null;
+        }
+
+        var editorWidth  = Math.Max(vm.CanvasWidth  * 2.5, 120);
+        var editorHeight = Math.Max(vm.CanvasHeight * 1.5, 28);
+
+        var border = new Border
+        {
+            Width           = editorWidth,
+            Height          = editorHeight,
+            Background      = new SolidColorBrush(Color.FromArgb(240, 255, 255, 255)),
+            BorderBrush     = new SolidColorBrush(Color.FromRgb(0, 120, 215)),
+            BorderThickness = new Thickness(1.5),
+            CornerRadius    = new CornerRadius(3),
+            Effect          = new DropShadowEffect { BlurRadius = 6, ShadowDepth = 2, Opacity = 0.3 },
+            Padding         = new Thickness(3, 1, 3, 1),
+        };
+
+        var tb = new TextBox
+        {
+            Text            = vm.EditedText,
+            FontSize        = Math.Max(vm.CanvasHeight * 0.7, 9),
+            Background      = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding         = new Thickness(0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            AcceptsReturn   = false,
+        };
+
+        border.Child = tb;
+
+        // Position the editor above or below the word
+        var editorTop = vm.CanvasY - editorHeight - 2;
+        if (editorTop < 0) editorTop = vm.CanvasY + vm.CanvasHeight + 2;
+
+        Canvas.SetLeft(border, vm.CanvasX);
+        Canvas.SetTop(border,  editorTop);
+        WordsCanvas.Children.Add(border);
+        WordsCanvas.Tag = border;
+
+        tb.Focus();
+        tb.SelectAll();
+
+        tb.LostFocus += (_, _) => CommitWordEdit(vm, tb.Text, border);
+        tb.KeyDown   += (_, e) =>
+        {
+            if (e.Key == Key.Return || e.Key == Key.Escape)
+            {
+                if (e.Key == Key.Escape) tb.Text = vm.OriginalText;
+                CommitWordEdit(vm, tb.Text, border);
+                e.Handled = true;
+            }
+        };
+    }
+
+    private void CommitWordEdit(TextEditWordViewModel vm, string newText, FrameworkElement editor)
+    {
+        vm.EditedText = newText.Trim();
+        if (WordsCanvas.Tag == editor)
+        {
+            WordsCanvas.Children.Remove(editor);
+            WordsCanvas.Tag = null;
+        }
     }
 
     // ── Double-click on page to add text annotation ───────────────────────────

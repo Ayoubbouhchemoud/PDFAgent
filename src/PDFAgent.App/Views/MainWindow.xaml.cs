@@ -11,6 +11,9 @@ public partial class MainWindow : Window
     private readonly BatchWorkflowViewModel _batchVm;
     private readonly OcrReviewViewModel     _ocrVm;
 
+    // Prevents the scroll→CurrentPage→scroll feedback loop.
+    private bool _updatingCurrentPageFromScroll;
+
     public MainWindow(
         MainViewModel mainViewModel,
         BatchWorkflowViewModel batchVm,
@@ -25,15 +28,16 @@ public partial class MainWindow : Window
 
         mainViewModel.BatchWorkflowRequested += (_, _) => OpenBatchWorkflow();
         mainViewModel.OcrReviewRequested     += (_, _) => OpenOcrReview();
-        mainViewModel.SignRequested          += async (_, _) => await OpenSignatureDialogAsync();
+        mainViewModel.SignRequested          += (_, _) => OpenSignatureDialog();
 
-        // Scroll the viewer whenever page navigation changes.
+        // Scroll to page when navigation buttons are used — NOT when scroll updates CurrentPage.
         mainViewModel.PropertyChanged += (_, pe) =>
         {
-            if (pe.PropertyName == nameof(MainViewModel.CurrentPage))
+            if (pe.PropertyName == nameof(MainViewModel.CurrentPage) && !_updatingCurrentPageFromScroll)
                 ScrollToCurrentPage();
         };
 
+        PageScrollViewer.ScrollChanged += OnPageScrollChanged;
         Loaded += async (_, _) => await mainViewModel.InitializeAsync();
     }
 
@@ -48,9 +52,23 @@ public partial class MainWindow : Window
         PageScrollViewer.ScrollToVerticalOffset(targetOff);
     }
 
+    private void OnPageScrollChanged(object sender, System.Windows.Controls.ScrollChangedEventArgs e)
+    {
+        if (_mainViewModel.TotalPages <= 0 || PageScrollViewer.ExtentHeight <= 0) return;
+        var pageH = PageScrollViewer.ExtentHeight / _mainViewModel.TotalPages;
+        if (pageH <= 0) return;
+        var visiblePage = (int)(PageScrollViewer.VerticalOffset / pageH) + 1;
+        var clamped     = Math.Clamp(visiblePage, 1, _mainViewModel.TotalPages);
+        if (clamped == _mainViewModel.CurrentPage) return;
+
+        _updatingCurrentPageFromScroll = true;
+        _mainViewModel.CurrentPage = clamped;
+        _updatingCurrentPageFromScroll = false;
+    }
+
     // ── Sign: show dialog, then place sticker ────────────────────────────────
 
-    private async Task OpenSignatureDialogAsync()
+    private void OpenSignatureDialog()
     {
         var vm     = new SignatureDialogViewModel();
         var dialog = new SignatureDialog { DataContext = vm, Owner = this };

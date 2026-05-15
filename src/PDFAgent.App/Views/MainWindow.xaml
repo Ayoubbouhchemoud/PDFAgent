@@ -16,6 +16,11 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
 
+    <Window.InputBindings>
+        <KeyBinding Key="Z" Modifiers="Ctrl" Command="{Binding UndoCommand}" />
+        <KeyBinding Key="E" Modifiers="Ctrl" Command="{Binding ToggleTextEditModeCommand}" />
+    </Window.InputBindings>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />
@@ -94,10 +99,43 @@
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSign}" />
                     </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding ApplyTextAnnotationsCommand}"
-                            ToolTip="Apply text edits to PDF  (double-click any page to add text)">
+                            ToolTip="Apply text annotations to PDF  (double-click any page to add text)">
                         <TextBlock Text="T↓" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    VerticalAlignment="Center" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ToggleTextEditModeCommand}"
+                            ToolTip="Edit existing PDF text — click words to replace them">
+                        <TextBlock FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="✎" />
+                                    <Setter Property="Foreground" Value="{DynamicResource OnSurfaceVariantBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTextEditMode}" Value="True">
+                                            <Setter Property="Foreground" Value="#0078D4" />
+                                            <Setter Property="Text" Value="✎●" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ApplyTextEditsCommand}"
+                            ToolTip="Commit text edits to PDF">
+                        <TextBlock FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="✎✓" />
+                                    <Setter Property="Foreground" Value="{DynamicResource OnSurfaceVariantBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTextEditMode}" Value="True">
+                                            <Setter Property="Foreground" Value="#107C10" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" />
@@ -114,6 +152,11 @@
                     </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding RotateCommand}" ToolTip="Rotate page">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRotate}" />
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding UndoCommand}" ToolTip="Undo last operation (Ctrl+Z)">
+                        <TextBlock Text="↩" FontSize="15"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
                     </Button>
 
                     <Separator Style="{StaticResource ToolbarSeparator}" />

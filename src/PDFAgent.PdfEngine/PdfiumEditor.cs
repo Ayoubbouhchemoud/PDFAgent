@@ -44,24 +44,73 @@ public sealed class PdfiumEditor : IPdfEditor
     }
 
     public async Task<OperationResult> SplitAsync(
-        string inputPath, string outputDir, SplitMode mode, CancellationToken ct = default)
+        string inputPath, SplitOptions opts, CancellationToken ct = default)
     {
         return await Task.Run(() =>
         {
             try
             {
-                Directory.CreateDirectory(outputDir);
                 using var input = PdfReader.Open(inputPath, PdfDocumentOpenMode.Import);
-                var baseName = Path.GetFileNameWithoutExtension(inputPath);
-                for (var i = 0; i < input.PageCount; i++)
+
+                switch (opts.Mode)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    using var pageDoc = new PdfDocument();
-                    pageDoc.AddPage(input.Pages[i]);
-                    pageDoc.Save(Path.Combine(outputDir, $"{baseName}_page_{i + 1}.pdf"));
+                    case SplitMode.SplitAll:
+                    {
+                        Directory.CreateDirectory(opts.OutputDir);
+                        for (var i = 0; i < input.PageCount; i++)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            using var doc = new PdfDocument();
+                            doc.AddPage(input.Pages[i]);
+                            doc.Save(Path.Combine(opts.OutputDir, $"{opts.BaseName}_page_{i + 1}.pdf"));
+                        }
+                        _logger.LogInformation("SplitAll {Input} → {Count} files", inputPath, input.PageCount);
+                        return OperationResult.Ok($"Split into {input.PageCount} individual pages");
+                    }
+
+                    case SplitMode.SplitRange:
+                    {
+                        using var doc = new PdfDocument();
+                        var added = 0;
+                        foreach (var idx in opts.PageIndices)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            if (idx >= 0 && idx < input.PageCount)
+                            {
+                                doc.AddPage(input.Pages[idx]);
+                                added++;
+                            }
+                        }
+                        if (added == 0)
+                            return OperationResult.Fail("No valid pages in the specified range");
+                        doc.Save(opts.OutputFile);
+                        _logger.LogInformation("SplitRange {Input} → {File} ({Count} pages)", inputPath, opts.OutputFile, added);
+                        return OperationResult.Ok($"Extracted {added} page(s) → {Path.GetFileName(opts.OutputFile)}");
+                    }
+
+                    case SplitMode.SplitEvery:
+                    {
+                        Directory.CreateDirectory(opts.OutputDir);
+                        var n      = Math.Max(1, opts.EveryN);
+                        var chunks = (int)Math.Ceiling(input.PageCount / (double)n);
+                        for (var chunk = 0; chunk < chunks; chunk++)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            using var doc   = new PdfDocument();
+                            var firstPage   = chunk * n + 1;
+                            var lastPage    = Math.Min(firstPage + n - 1, input.PageCount);
+                            for (var i = firstPage - 1; i < lastPage; i++)
+                                doc.AddPage(input.Pages[i]);
+                            var fileName = $"{opts.BaseName}_pages_{firstPage}-{lastPage}.pdf";
+                            doc.Save(Path.Combine(opts.OutputDir, fileName));
+                        }
+                        _logger.LogInformation("SplitEvery{N} {Input} → {Chunks} files", n, inputPath, chunks);
+                        return OperationResult.Ok($"Split into {chunks} file(s) of up to {n} page(s) each");
+                    }
+
+                    default:
+                        return OperationResult.Fail($"Unsupported split mode: {opts.Mode}");
                 }
-                _logger.LogInformation("Split {Input} into {Count} pages", inputPath, input.PageCount);
-                return OperationResult.Ok($"Split into {input.PageCount} pages");
             }
             catch (Exception ex)
             {
@@ -521,6 +570,56 @@ public sealed class PdfiumEditor : IPdfEditor
             {
                 _logger.LogError(ex, "BakeTextAnnotations failed");
                 return OperationResult.Fail($"Text bake failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
+    public async Task<OperationResult> BakeTextEditsAsync(
+        string filePath, string outputPath,
+        IReadOnlyList<PDFAgent.Core.Models.TextEditRecord> edits,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var input  = PdfReader.Open(filePath, PdfDocumentOpenMode.Import);
+                using var output = new PdfDocument();
+
+                var byPage = edits
+                    .GroupBy(e => e.PageNumber - 1)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                for (var i = 0; i < input.PageCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var page = output.AddPage(input.Pages[i]);
+                    if (!byPage.TryGetValue(i, out var list)) continue;
+
+                    using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+                    foreach (var edit in list)
+                    {
+                        if (string.IsNullOrWhiteSpace(edit.NewText)) continue;
+
+                        // White-out the original word area; extend width to accommodate longer text
+                        var whiteoutRect = new XRect(edit.X, edit.Y, edit.Width * 2.5, edit.Height * 1.2);
+                        gfx.DrawRectangle(XBrushes.White, whiteoutRect);
+
+                        // Draw the replacement text
+                        var font     = new XFont("Arial", Math.Max(edit.FontSize, 6), XFontStyleEx.Regular);
+                        var textRect = new XRect(edit.X, edit.Y, page.Width.Point - edit.X, edit.Height * 1.5);
+                        gfx.DrawString(edit.NewText, font, XBrushes.Black, textRect, XStringFormats.TopLeft);
+                    }
+                }
+
+                output.Save(outputPath);
+                _logger.LogInformation("Baked {Count} text edits → {Output}", edits.Count, outputPath);
+                return OperationResult.Ok($"Applied {edits.Count} text edit(s)");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "BakeTextEdits failed");
+                return OperationResult.Fail($"Text edit bake failed: {ex.Message}");
             }
         }, ct);
     }
