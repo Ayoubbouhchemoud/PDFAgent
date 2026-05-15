@@ -73,7 +73,6 @@ public partial class App : Application
 
         // ViewModels
         services.AddTransient<MainViewModel>();
-        services.AddTransient<ViewerViewModel>();
         services.AddTransient<BatchWorkflowViewModel>();
         services.AddTransient<OcrReviewViewModel>();
 

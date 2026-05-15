@@ -10,15 +10,38 @@ using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using PDFAgent.App.ViewModels;
+using PDFAgent.Core.Models;
 
 namespace PDFAgent.App.Views;
 
 public partial class PdfPageView : UserControl
 {
-    // Tracks which WPF element belongs to which ViewModel so we can remove them.
-    private readonly Dictionary<StickerViewModel, FrameworkElement>        _stickerElements    = new();
-    private readonly Dictionary<TextAnnotationViewModel, FrameworkElement> _annotationElements = new();
-    private readonly Dictionary<TextEditWordViewModel, FrameworkElement>   _wordElements       = new();
+    // ── Scale constant ────────────────────────────────────────────────────────
+    //
+    // Pages are rendered at 150 DPI with SetResolution(150,150) PNG metadata.
+    // WPF's Image element with Stretch=None displays the image at:
+    //   ActualWidth = pixelWidth × (96 / 150) = pageWidthPts × (150/72) × (96/150)
+    //               = pageWidthPts × (96/72)
+    //
+    // So 1 PDF point = 96/72 WPF logical pixels (DIPs), always, regardless of
+    // system DPI, layout timing, or WPF version. Using this constant eliminates
+    // every runtime-measurement timing dependency.
+    //
+    private const double Scale = 96.0 / 72.0;   // DIPs per PDF point ≈ 1.333
+
+    private static double Pts(double pdfPts) => pdfPts * Scale;
+
+    // ── Overlay element dictionaries ──────────────────────────────────────────
+    private readonly Dictionary<StickerViewModel, FrameworkElement>        _stickerElements     = new();
+    private readonly Dictionary<TextAnnotationViewModel, FrameworkElement> _annotationElements  = new();
+    private readonly Dictionary<TextEditWordViewModel, FrameworkElement>   _wordElements        = new();
+    private readonly Dictionary<SearchHighlightRect, Rectangle>            _searchHighlights    = new();
+
+    // ── Text selection state ──────────────────────────────────────────────────
+    private record WordBox(PdfTextSegment Segment, Rect CanvasRect);
+    private readonly List<WordBox> _wordBoxes = new();
+    private bool  _isSelecting;
+    private Point _selectionStart;
 
     public PdfPageView()
     {
@@ -34,36 +57,55 @@ public partial class PdfPageView : UserControl
     {
         if (e.OldValue is RenderedPageItem old)
         {
-            old.Stickers.CollectionChanged        -= OnStickersChanged;
-            old.TextAnnotations.CollectionChanged -= OnTextAnnotationsChanged;
-            old.EditableWords.CollectionChanged   -= OnEditableWordsChanged;
-            old.PropertyChanged                   -= OnPageItemPropertyChanged;
+            old.Stickers.CollectionChanged         -= OnStickersChanged;
+            old.TextAnnotations.CollectionChanged  -= OnTextAnnotationsChanged;
+            old.EditableWords.CollectionChanged    -= OnEditableWordsChanged;
+            old.SearchHighlights.CollectionChanged -= OnSearchHighlightsChanged;
+            old.PropertyChanged                    -= OnPageItemPropertyChanged;
         }
+
+        CancelSelection();
+        _wordBoxes.Clear();
 
         StickerCanvas.Children.Clear();
         TextCanvas.Children.Clear();
         WordsCanvas.Children.Clear();
+        SearchCanvas.Children.Clear();
+        SelectionCanvas.Children.Clear();
         _stickerElements.Clear();
         _annotationElements.Clear();
         _wordElements.Clear();
+        _searchHighlights.Clear();
 
         if (e.NewValue is RenderedPageItem item)
         {
-            item.Stickers.CollectionChanged        += OnStickersChanged;
-            item.TextAnnotations.CollectionChanged += OnTextAnnotationsChanged;
-            item.EditableWords.CollectionChanged   += OnEditableWordsChanged;
-            item.PropertyChanged                   += OnPageItemPropertyChanged;
+            item.Stickers.CollectionChanged         += OnStickersChanged;
+            item.TextAnnotations.CollectionChanged  += OnTextAnnotationsChanged;
+            item.EditableWords.CollectionChanged    += OnEditableWordsChanged;
+            item.SearchHighlights.CollectionChanged += OnSearchHighlightsChanged;
+            item.PropertyChanged                    += OnPageItemPropertyChanged;
 
-            foreach (var s  in item.Stickers)        AddStickerElement(s);
-            foreach (var ta in item.TextAnnotations) AddTextAnnotationElement(ta);
+            // Build word boxes immediately — constant Scale means no layout dependency.
+            RebuildWordBoxes();
+
+            foreach (var s  in item.Stickers)         AddStickerElement(s);
+            foreach (var ta in item.TextAnnotations)  AddTextAnnotationElement(ta);
+            foreach (var h  in item.SearchHighlights) AddSearchHighlight(h);
 
             if (item.IsTextEditModeActive)
                 foreach (var w in item.EditableWords) AddWordElement(w);
         }
     }
 
-    private void OnPageItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private void OnPageItemPropertyChanged(object? sender,
+        System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(RenderedPageItem.TextLayer))
+        {
+            RebuildWordBoxes();
+            return;
+        }
+
         if (e.PropertyName != nameof(RenderedPageItem.IsTextEditModeActive)) return;
         var item = PageItem;
         if (item == null) return;
@@ -85,7 +127,6 @@ public partial class PdfPageView : UserControl
     {
         if (e.NewItems != null)
             foreach (StickerViewModel vm in e.NewItems) AddStickerElement(vm);
-
         if (e.OldItems != null)
             foreach (StickerViewModel vm in e.OldItems) RemoveStickerElement(vm);
     }
@@ -94,7 +135,6 @@ public partial class PdfPageView : UserControl
     {
         if (e.NewItems != null)
             foreach (TextAnnotationViewModel vm in e.NewItems) AddTextAnnotationElement(vm);
-
         if (e.OldItems != null)
             foreach (TextAnnotationViewModel vm in e.OldItems) RemoveTextAnnotationElement(vm);
     }
@@ -103,7 +143,6 @@ public partial class PdfPageView : UserControl
 
     private void AddStickerElement(StickerViewModel vm)
     {
-        // Outer draggable border
         var outer = new Border
         {
             Width           = vm.Width,
@@ -115,10 +154,10 @@ public partial class PdfPageView : UserControl
             Cursor          = Cursors.SizeAll,
             Effect          = new DropShadowEffect
             {
-                BlurRadius   = 8,
-                ShadowDepth  = 2,
-                Opacity      = 0.4,
-                Color        = Colors.Black,
+                BlurRadius  = 8,
+                ShadowDepth = 2,
+                Opacity     = 0.4,
+                Color       = Colors.Black,
             },
         };
 
@@ -126,7 +165,6 @@ public partial class PdfPageView : UserControl
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        // ── Toolbar row ──
         var toolbar = new Grid { Background = new SolidColorBrush(Color.FromArgb(200, 24, 36, 66)) };
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -138,10 +176,10 @@ public partial class PdfPageView : UserControl
 
         var label = new TextBlock
         {
-            Text              = "✦ Drag to position",
-            FontSize          = 10,
-            Foreground        = new SolidColorBrush(Colors.White),
-            VerticalAlignment = VerticalAlignment.Center,
+            Text                = "✦ Drag to position",
+            FontSize            = 10,
+            Foreground          = new SolidColorBrush(Colors.White),
+            VerticalAlignment   = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         Grid.SetColumn(label, 1);
@@ -155,8 +193,7 @@ public partial class PdfPageView : UserControl
         toolbar.Children.Add(commitBtn);
         Grid.SetRow(toolbar, 0);
 
-        // ── Signature preview ──
-        var preview = BuildSignaturePreview(vm.Bytes);
+        var preview      = BuildSignaturePreview(vm.Bytes);
         var previewBorder = new Border
         {
             Margin     = new Thickness(4, 2, 4, 4),
@@ -174,9 +211,7 @@ public partial class PdfPageView : UserControl
         StickerCanvas.Children.Add(outer);
         _stickerElements[vm] = outer;
 
-        // Wire drag (skip if click is on a button)
-        MakeDraggable(outer, StickerCanvas,
-            (x, y) => { vm.X = x; vm.Y = y; });
+        MakeDraggable(outer, StickerCanvas, (x, y) => { vm.X = x; vm.Y = y; });
     }
 
     private void RemoveStickerElement(StickerViewModel vm)
@@ -211,7 +246,6 @@ public partial class PdfPageView : UserControl
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        // Header bar with drag handle and delete button
         var header = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(200, 0, 120, 215)),
@@ -222,10 +256,10 @@ public partial class PdfPageView : UserControl
 
         var handleLabel = new TextBlock
         {
-            Text                = "  ✎ Text",
-            FontSize            = 10,
-            Foreground          = new SolidColorBrush(Colors.White),
-            VerticalAlignment   = VerticalAlignment.Center,
+            Text              = "  ✎ Text",
+            FontSize          = 10,
+            Foreground        = new SolidColorBrush(Colors.White),
+            VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(handleLabel, 0);
 
@@ -238,7 +272,6 @@ public partial class PdfPageView : UserControl
         header.Children.Add(deleteBtn);
         Grid.SetRow(header, 0);
 
-        // Editable text box
         var textBox = new TextBox
         {
             AcceptsReturn   = true,
@@ -257,7 +290,6 @@ public partial class PdfPageView : UserControl
             Mode                = BindingMode.TwoWay,
             UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
         });
-        // TextBox handles its own mouse events — prevent drag from starting on it.
         textBox.PreviewMouseLeftButtonDown += (_, e) => e.Handled = false;
         Grid.SetRow(textBox, 1);
 
@@ -270,21 +302,16 @@ public partial class PdfPageView : UserControl
         TextCanvas.Children.Add(outer);
         _annotationElements[vm] = outer;
 
-        // Drag via header or border (not textbox)
         MakeDraggable(outer, TextCanvas,
             (x, y) => { vm.X = x; vm.Y = y; },
             skipSource: typeof(TextBox));
 
-        // Wire delete event
         vm.DeleteRequested += (s, _) =>
         {
             if (s is TextAnnotationViewModel tvm && PageItem != null)
-            {
                 PageItem.TextAnnotations.Remove(tvm);
-            }
         };
 
-        // Auto-focus so user can type immediately
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
             new Action(() => textBox.Focus()));
     }
@@ -295,22 +322,19 @@ public partial class PdfPageView : UserControl
             TextCanvas.Children.Remove(elem);
     }
 
-    // ── EditableWords collection ──────────────────────────────────────────────
+    // ── Editable-words (text-edit mode) ───────────────────────────────────────
 
     private void OnEditableWordsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (!(PageItem?.IsTextEditModeActive ?? false)) return;
-
         if (e.NewItems != null)
             foreach (TextEditWordViewModel vm in e.NewItems) AddWordElement(vm);
-
         if (e.OldItems != null)
             foreach (TextEditWordViewModel vm in e.OldItems) RemoveWordElement(vm);
     }
 
     private void AddWordElement(TextEditWordViewModel vm)
     {
-        // Semi-transparent blue highlight rectangle
         var rect = new Border
         {
             Width           = Math.Max(vm.CanvasWidth, 4),
@@ -334,7 +358,6 @@ public partial class PdfPageView : UserControl
             OpenWordEditor(vm, rect);
         };
 
-        // Color overlay changes when word has been edited
         vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != nameof(TextEditWordViewModel.EditedText)) return;
@@ -355,7 +378,6 @@ public partial class PdfPageView : UserControl
 
     private void OpenWordEditor(TextEditWordViewModel vm, Border highlightRect)
     {
-        // Remove existing editor if any
         if (WordsCanvas.Tag is FrameworkElement existing)
         {
             WordsCanvas.Children.Remove(existing);
@@ -379,18 +401,17 @@ public partial class PdfPageView : UserControl
 
         var tb = new TextBox
         {
-            Text            = vm.EditedText,
-            FontSize        = Math.Max(vm.CanvasHeight * 0.7, 9),
-            Background      = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding         = new Thickness(0),
+            Text                     = vm.EditedText,
+            FontSize                 = Math.Max(vm.CanvasHeight * 0.7, 9),
+            Background               = Brushes.Transparent,
+            BorderThickness          = new Thickness(0),
+            Padding                  = new Thickness(0),
             VerticalContentAlignment = VerticalAlignment.Center,
-            AcceptsReturn   = false,
+            AcceptsReturn            = false,
         };
 
         border.Child = tb;
 
-        // Position the editor above or below the word
         var editorTop = vm.CanvasY - editorHeight - 2;
         if (editorTop < 0) editorTop = vm.CanvasY + vm.CanvasHeight + 2;
 
@@ -424,16 +445,259 @@ public partial class PdfPageView : UserControl
         }
     }
 
-    // ── Double-click on page to add text annotation ───────────────────────────
+    // ── Search highlights ─────────────────────────────────────────────────────
+
+    private void OnSearchHighlightsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            SearchCanvas.Children.Clear();
+            _searchHighlights.Clear();
+            return;
+        }
+        if (e.NewItems != null)
+            foreach (SearchHighlightRect h in e.NewItems) AddSearchHighlight(h);
+        if (e.OldItems != null)
+            foreach (SearchHighlightRect h in e.OldItems) RemoveSearchHighlight(h);
+    }
+
+    private void AddSearchHighlight(SearchHighlightRect h)
+    {
+        var rect = new Rectangle
+        {
+            Width            = Math.Max(Pts(h.Width),  4),
+            Height           = Math.Max(Pts(h.Height), 6),
+            Fill             = new SolidColorBrush(Color.FromArgb(110, 255, 200, 0)),
+            Stroke           = new SolidColorBrush(Color.FromArgb(180, 200, 140, 0)),
+            StrokeThickness  = 1,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(rect, Pts(h.X));
+        Canvas.SetTop(rect,  Pts(h.Y));
+        SearchCanvas.Children.Add(rect);
+        _searchHighlights[h] = rect;
+    }
+
+    private void RemoveSearchHighlight(SearchHighlightRect h)
+    {
+        if (_searchHighlights.Remove(h, out var rect))
+            SearchCanvas.Children.Remove(rect);
+    }
+
+    // ── Word-box management (text selection) ──────────────────────────────────
+
+    private void RebuildWordBoxes()
+    {
+        _wordBoxes.Clear();
+        var layer = PageItem?.TextLayer;
+        if (layer == null || layer.Count == 0)
+        {
+            PageGrid.Cursor = Cursors.Arrow;
+            return;
+        }
+
+        foreach (var seg in layer)
+        {
+            _wordBoxes.Add(new WordBox(
+                seg,
+                new Rect(Pts(seg.X), Pts(seg.Y),
+                         Math.Max(Pts(seg.Width),  4),
+                         Math.Max(Pts(seg.Height), 6))));
+        }
+
+        PageGrid.Cursor = Cursors.IBeam;
+    }
+
+    // ── Mouse handlers ────────────────────────────────────────────────────────
 
     private void PageGrid_MouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount != 2 || PageItem == null) return;
+        if (e.ClickCount == 2)
+        {
+            CancelSelection();
+            if (PageItem == null) return;
+            var pos = e.GetPosition(PageGrid);
+            var ann = new TextAnnotationViewModel { X = pos.X - 10, Y = pos.Y - 11 };
+            PageItem.TextAnnotations.Add(ann);
+            e.Handled = true;
+            return;
+        }
 
+        if (e.ClickCount == 1)
+        {
+            CancelSelection();
+            _isSelecting    = true;
+            _selectionStart = e.GetPosition(PageGrid);
+            PageGrid.CaptureMouse();
+            e.Handled = true;
+        }
+    }
+
+    private void PageGrid_MouseMove(object sender, MouseEventArgs e)
+    {
         var pos = e.GetPosition(PageGrid);
-        var ann = new TextAnnotationViewModel { X = pos.X - 10, Y = pos.Y - 11 };
-        PageItem.TextAnnotations.Add(ann);
-        e.Handled = true;
+        if (_isSelecting)
+            UpdateSelectionVisual(pos);
+        else
+            UpdateHoverHighlight(pos);
+    }
+
+    private void PageGrid_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isSelecting) return;
+        _isSelecting = false;
+        PageGrid.ReleaseMouseCapture();
+        FinalizeSelection(e.GetPosition(PageGrid));
+    }
+
+    private void PageGrid_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (!_isSelecting)
+            SelectionCanvas.Children.Clear();
+    }
+
+    // ── Selection visuals ─────────────────────────────────────────────────────
+
+    private void UpdateHoverHighlight(Point pos)
+    {
+        if (_wordBoxes.Count == 0) return;
+        SelectionCanvas.Children.Clear();
+        var hovered = _wordBoxes.FirstOrDefault(wb => wb.CanvasRect.Contains(pos));
+        if (hovered == null) return;
+
+        var rect = new Rectangle
+        {
+            Width            = hovered.CanvasRect.Width,
+            Height           = hovered.CanvasRect.Height,
+            Fill             = new SolidColorBrush(Color.FromArgb(50, 0, 100, 220)),
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(rect, hovered.CanvasRect.X);
+        Canvas.SetTop(rect,  hovered.CanvasRect.Y);
+        SelectionCanvas.Children.Add(rect);
+    }
+
+    private void UpdateSelectionVisual(Point current)
+    {
+        SelectionCanvas.Children.Clear();
+        var selRect = GetSelectionRect(current);
+
+        foreach (var wb in _wordBoxes.Where(wb => wb.CanvasRect.IntersectsWith(selRect)))
+        {
+            var wordRect = new Rectangle
+            {
+                Width            = wb.CanvasRect.Width,
+                Height           = wb.CanvasRect.Height,
+                Fill             = new SolidColorBrush(Color.FromArgb(180, 0, 100, 220)),
+                Stroke           = new SolidColorBrush(Color.FromArgb(255, 0,  80, 200)),
+                StrokeThickness  = 1,
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(wordRect, wb.CanvasRect.X);
+            Canvas.SetTop(wordRect,  wb.CanvasRect.Y);
+            SelectionCanvas.Children.Add(wordRect);
+        }
+
+        if (selRect.Width >= 1 || selRect.Height >= 1)
+        {
+            var band = new Rectangle
+            {
+                Width            = Math.Max(selRect.Width,  1),
+                Height           = Math.Max(selRect.Height, 1),
+                Fill             = new SolidColorBrush(Color.FromArgb(40, 0, 100, 220)),
+                Stroke           = new SolidColorBrush(Color.FromArgb(220, 0, 100, 220)),
+                StrokeThickness  = 2,
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(band, selRect.X);
+            Canvas.SetTop(band,  selRect.Y);
+            SelectionCanvas.Children.Add(band);
+        }
+    }
+
+    private void FinalizeSelection(Point endPos)
+    {
+        SelectionCanvas.Children.Clear();
+        var selRect = GetSelectionRect(endPos);
+        if (selRect.Width < 2 || selRect.Height < 2) return;
+
+        if (_wordBoxes.Count == 0)
+        {
+            var msg = PageItem?.TextLayer == null
+                ? "Text layer loading — try again in a moment"
+                : "No text — this page is a scanned image (run OCR to add text)";
+            ShowBriefMessage(msg);
+            return;
+        }
+
+        var selected = _wordBoxes.Where(wb => wb.CanvasRect.IntersectsWith(selRect)).ToList();
+        if (selected.Count == 0)
+        {
+            ShowBriefMessage("No text found in selected area");
+            return;
+        }
+
+        foreach (var wb in selected)
+        {
+            var rect = new Rectangle
+            {
+                Width            = wb.CanvasRect.Width,
+                Height           = wb.CanvasRect.Height,
+                Fill             = new SolidColorBrush(Color.FromArgb(180, 0, 100, 220)),
+                Stroke           = new SolidColorBrush(Color.FromArgb(255, 0,  80, 200)),
+                StrokeThickness  = 1,
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(rect, wb.CanvasRect.X);
+            Canvas.SetTop(rect,  wb.CanvasRect.Y);
+            SelectionCanvas.Children.Add(rect);
+        }
+
+        var text = string.Join(" ", selected.Select(wb => wb.Segment.Text));
+        if (!string.IsNullOrEmpty(text))
+            System.Windows.Clipboard.SetText(text);
+    }
+
+    private Rect GetSelectionRect(Point current) =>
+        new(Math.Min(_selectionStart.X, current.X),
+            Math.Min(_selectionStart.Y, current.Y),
+            Math.Abs(current.X - _selectionStart.X),
+            Math.Abs(current.Y - _selectionStart.Y));
+
+    private void CancelSelection()
+    {
+        _isSelecting = false;
+        if (PageGrid?.IsMouseCaptured == true) PageGrid.ReleaseMouseCapture();
+        SelectionCanvas?.Children.Clear();
+    }
+
+    private void ShowBriefMessage(string message)
+    {
+        var border = new Border
+        {
+            Background       = new SolidColorBrush(Color.FromArgb(200, 40, 40, 40)),
+            CornerRadius     = new CornerRadius(4),
+            Padding          = new Thickness(10, 5, 10, 5),
+            IsHitTestVisible = false,
+        };
+        border.Child = new TextBlock
+        {
+            Text       = message,
+            Foreground = Brushes.White,
+            FontSize   = 12,
+        };
+        Canvas.SetLeft(border, 20);
+        Canvas.SetTop(border,  20);
+        SelectionCanvas.Children.Add(border);
+
+        var timer = new System.Windows.Threading.DispatcherTimer
+            { Interval = TimeSpan.FromSeconds(3) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            SelectionCanvas.Children.Remove(border);
+        };
+        timer.Start();
     }
 
     // ── Drag helper ───────────────────────────────────────────────────────────
@@ -451,7 +715,6 @@ public partial class PdfPageView : UserControl
 
         elem.MouseLeftButtonDown += (s, e) =>
         {
-            // Don't start drag when the user clicked a button or the skipped type
             if (e.OriginalSource is Button) return;
             if (skipSource != null && e.OriginalSource.GetType() == skipSource) return;
 
@@ -501,12 +764,11 @@ public partial class PdfPageView : UserControl
             Cursor          = Cursors.Hand,
         };
         var hoverColor = new SolidColorBrush(Color.FromArgb(160, hoverBg.R, hoverBg.G, hoverBg.B));
-        btn.MouseEnter  += (_, _) => btn.Background = hoverColor;
-        btn.MouseLeave  += (_, _) => btn.Background = Brushes.Transparent;
+        btn.MouseEnter += (_, _) => btn.Background = hoverColor;
+        btn.MouseLeave += (_, _) => btn.Background = Brushes.Transparent;
         return btn;
     }
 
-    // Reconstruct signature preview: vector JSON → Canvas of polylines, PNG → Image.
     private static UIElement BuildSignaturePreview(byte[] bytes)
     {
         if (bytes.Length > 0 && bytes[0] == (byte)'{')
@@ -522,7 +784,11 @@ public partial class PdfPageView : UserControl
                 var allPts = root.GetProperty("s")
                     .EnumerateArray()
                     .SelectMany(stroke => stroke.EnumerateArray()
-                        .Select(pt => { var a = pt.EnumerateArray().ToArray(); return new Point(a[0].GetDouble(), a[1].GetDouble()); }))
+                        .Select(pt =>
+                        {
+                            var a = pt.EnumerateArray().ToArray();
+                            return new Point(a[0].GetDouble(), a[1].GetDouble());
+                        }))
                     .ToList();
 
                 if (allPts.Count > 0)
@@ -540,18 +806,22 @@ public partial class PdfPageView : UserControl
                     foreach (var stroke in root.GetProperty("s").EnumerateArray())
                     {
                         var pts = stroke.EnumerateArray()
-                            .Select(pt => { var a = pt.EnumerateArray().ToArray(); return new Point(a[0].GetDouble(), a[1].GetDouble()); })
+                            .Select(pt =>
+                            {
+                                var a = pt.EnumerateArray().ToArray();
+                                return new Point(a[0].GetDouble(), a[1].GetDouble());
+                            })
                             .ToArray();
                         if (pts.Length < 2) continue;
 
                         var pl = new Polyline
                         {
-                            Stroke          = Brushes.Black,
-                            StrokeThickness = 1.8,
+                            Stroke             = Brushes.Black,
+                            StrokeThickness    = 1.8,
                             StrokeStartLineCap = PenLineCap.Round,
                             StrokeEndLineCap   = PenLineCap.Round,
                             StrokeLineJoin     = PenLineJoin.Round,
-                            Points          = new PointCollection(
+                            Points             = new PointCollection(
                                 pts.Select(p => new Point(
                                     (previewW - bboxW * scale) / 2 + (p.X - minX) * scale,
                                     (previewH - bboxH * scale) / 2 + (p.Y - minY) * scale))),
@@ -576,8 +846,8 @@ public partial class PdfPageView : UserControl
         {
             try
             {
-                using var ms  = new MemoryStream(bytes);
-                var bmp       = new BitmapImage();
+                using var ms = new MemoryStream(bytes);
+                var bmp      = new BitmapImage();
                 bmp.BeginInit();
                 bmp.StreamSource = ms;
                 bmp.CacheOption  = BitmapCacheOption.OnLoad;
@@ -587,7 +857,12 @@ public partial class PdfPageView : UserControl
             }
             catch
             {
-                return new TextBlock { Text = "Signature", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                return new TextBlock
+                {
+                    Text                = "Signature",
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                };
             }
         }
     }
