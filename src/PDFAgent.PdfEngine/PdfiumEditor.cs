@@ -623,4 +623,46 @@ public sealed class PdfiumEditor : IPdfEditor
             }
         }, ct);
     }
+
+    public async Task<OperationResult> AddBlankPageAsync(
+        string filePath, string outputPath,
+        int insertAtIndex, double widthPts, double heightPts,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var input  = PdfReader.Open(filePath, PdfDocumentOpenMode.Import);
+                using var output = new PdfDocument();
+
+                var clampedIdx = Math.Clamp(insertAtIndex, 0, input.PageCount);
+
+                for (var i = 0; i < clampedIdx; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    output.AddPage(input.Pages[i]);
+                }
+
+                var blank  = output.AddPage();
+                blank.Width  = XUnit.FromPoint(widthPts);
+                blank.Height = XUnit.FromPoint(heightPts);
+
+                for (var i = clampedIdx; i < input.PageCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    output.AddPage(input.Pages[i]);
+                }
+
+                output.Save(outputPath);
+                _logger.LogInformation("Added blank page at index {Idx} → {Output}", clampedIdx, outputPath);
+                return OperationResult.Ok($"Blank page inserted at position {clampedIdx + 1}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AddBlankPage failed");
+                return OperationResult.Fail($"Add page failed: {ex.Message}");
+            }
+        }, ct);
+    }
 }

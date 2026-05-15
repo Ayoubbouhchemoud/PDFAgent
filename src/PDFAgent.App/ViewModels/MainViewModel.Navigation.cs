@@ -22,6 +22,7 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
     [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     private bool _isDocumentLoaded;
 
     [ObservableProperty]

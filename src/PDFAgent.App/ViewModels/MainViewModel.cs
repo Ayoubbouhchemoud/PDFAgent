@@ -52,6 +52,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
     [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -783,6 +784,93 @@ public sealed partial class MainViewModel : ObservableObject
     private void Properties()
     {
         _fileDialog.ShowProperties(DocumentInfo!);
+    }
+
+    // ── Add Page ────────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task AddPageAsync()
+    {
+        // Fetch current page's dimensions so the dialog can show them.
+        var pageResult = await _pdfEngine.GetPageAsync(CurrentPage - 1);
+        var w = pageResult.IsSuccess && pageResult.Value != null ? pageResult.Value.WidthPoints  : 595.28;
+        var h = pageResult.IsSuccess && pageResult.Value != null ? pageResult.Value.HeightPoints : 841.89;
+
+        var dlgResult = _fileDialog.ShowAddPageDialog(CurrentPage, TotalPages, w, h);
+        if (dlgResult == null) return;
+
+        // Translate position choice to a 0-based insert index.
+        var insertAt = dlgResult.Position switch
+        {
+            PDFAgent.App.Services.AddPagePosition.BeforeCurrent => CurrentPage - 1,
+            PDFAgent.App.Services.AddPagePosition.AfterCurrent  => CurrentPage,
+            PDFAgent.App.Services.AddPagePosition.AtBeginning   => 0,
+            PDFAgent.App.Services.AddPagePosition.AtEnd         => TotalPages,
+            _                                                   => CurrentPage,
+        };
+
+        var path = _pdfEngine.FilePath;
+        var tmp  = Path.GetTempFileName();
+        string? undoSnap = null;
+        IsBusy = true;
+        StatusText = "Adding blank page…";
+        string? failStatus = null;
+
+        try
+        {
+            undoSnap = MakeUndoSnapshot();
+            await _pdfEngine.CloseAsync();
+
+            var result = await _pdfEditor.AddBlankPageAsync(
+                path, tmp, insertAt, dlgResult.WidthPts, dlgResult.HeightPts);
+
+            if (result.IsSuccess)
+            {
+                File.Move(tmp, path, overwrite: true);
+                tmp = null;
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
+                UndoCommand.NotifyCanExecuteChanged();
+            }
+            else
+            {
+                failStatus = $"Add page failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AddPage failed");
+            failStatus = $"Add page error: {ex.Message}";
+        }
+        finally
+        {
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
+            if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+
+                    // Navigate to the new page so user sees it.
+                    if (failStatus == null)
+                        CurrentPage = Math.Clamp(insertAt + 1, 1, reopen.Value.PageCount);
+
+                    await LoadThumbnailsAsync(ct);
+                    await RenderCurrentPagesAsync(ct, finalStatus: failStatus);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _logger.LogError(ex, "Reopen after AddPage failed"); }
+
+            IsBusy = false;
+        }
     }
 
     // ── Text Editing ────────────────────────────────────────────────────────

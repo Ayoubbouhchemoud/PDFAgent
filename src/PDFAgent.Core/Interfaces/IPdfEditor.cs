@@ -17,6 +17,7 @@ public interface IPdfEditor
     Task<OperationResult> AddSignatureImageAsync(string filePath, string outputPath, SignatureOverlayOptions opts, CancellationToken ct = default);
     Task<OperationResult> BakeTextAnnotationsAsync(string filePath, string outputPath, IReadOnlyList<TextAnnotationRecord> annotations, CancellationToken ct = default);
     Task<OperationResult> BakeTextEditsAsync(string filePath, string outputPath, IReadOnlyList<TextEditRecord> edits, CancellationToken ct = default);
+    Task<OperationResult> AddBlankPageAsync(string filePath, string outputPath, int insertAtIndex, double widthPts, double heightPts, CancellationToken ct = default);
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }

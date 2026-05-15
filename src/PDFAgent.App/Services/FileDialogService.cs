@@ -135,6 +135,13 @@ public sealed class FileDialogService : IFileDialogService
         return new SplitDialogResult(dialog.SelectedMode, dialog.PageRange, dialog.EveryN);
     }
 
+    public AddPageDialogResult? ShowAddPageDialog(int currentPage, int totalPages, double currentWidthPts, double currentHeightPts)
+    {
+        var dialog = new Views.AddPageDialog(currentPage, totalPages, currentWidthPts, currentHeightPts);
+        if (dialog.ShowDialog() != true) return null;
+        return new AddPageDialogResult(dialog.SelectedPosition, dialog.SelectedWidthPts, dialog.SelectedHeightPts);
+    }
+
     public RotateDialogResult? ShowRotateDialog(int currentPage, int totalPages)
     {
         var dialog = new Views.RotateOptionsDialog();

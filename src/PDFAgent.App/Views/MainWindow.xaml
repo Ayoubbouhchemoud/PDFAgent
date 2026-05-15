@@ -150,6 +150,11 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding SplitCommand}" ToolTip="Split PDF">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconSplit}" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding AddPageCommand}" ToolTip="Add blank page">
+                        <TextBlock Text="＋" FontSize="15" FontWeight="Bold"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                    </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding RotateCommand}" ToolTip="Rotate page">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRotate}" />
                     </Button>

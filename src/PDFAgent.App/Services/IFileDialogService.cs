@@ -28,6 +28,9 @@ public interface IFileDialogService
     /// The caller must then ask for an output path via <see cref="SavePdf"/>.
     /// </summary>
     IReadOnlyList<string>? ShowMergeDialog(IEnumerable<string> initialFiles);
+
+    /// <summary>Shows the Add Page dialog. Returns null if cancelled.</summary>
+    AddPageDialogResult? ShowAddPageDialog(int currentPage, int totalPages, double currentWidthPts, double currentHeightPts);
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
@@ -43,3 +46,8 @@ public sealed record SplitDialogResult(
     SplitMode Mode,
     string PageRange,
     int EveryN);
+
+public enum AddPagePosition { BeforeCurrent, AfterCurrent, AtBeginning, AtEnd }
+
+/// <summary>Result returned by the Add Page dialog.</summary>
+public sealed record AddPageDialogResult(AddPagePosition Position, double WidthPts, double HeightPts);
