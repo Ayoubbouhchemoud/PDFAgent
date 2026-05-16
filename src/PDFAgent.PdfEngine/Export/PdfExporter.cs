@@ -192,28 +192,20 @@ public sealed class PdfExporter : IPdfExporter
                 if (total > 1)
                     sb.Append($"<p class=\"page-num\">Page {i + 1} / {total}</p>\n");
 
-                if (page.Letters.Count > 0)
+                // Word-level extraction gives correctly ordered text for every PDF.
+                // Use it as the primary path; fall back to a rendered image only for
+                // truly scanned pages (no text layer at all).
+                var pageWords = page.GetWords().ToList();
+                if (pageWords.Count > 0)
                 {
-                    // Text PDF — structured semantic extraction
-                    var docPage = AnalyzePage(page);
-                    HtmlRenderBlocks(sb, docPage.Blocks);
+                    HtmlRenderWordBasedPage(sb, page, pageWords);
                 }
-                else
+                else if (pdfDoc != null)
                 {
-                    // No letter-level info: try word-level extraction first (handles
-                    // PDFs whose fonts PdfPig can read as words but not letters)
-                    var words = page.GetWords().ToList();
-                    if (words.Count > 0)
-                    {
-                        HtmlRenderWordsAsText(sb, words);
-                    }
-                    else if (pdfDoc != null)
-                    {
-                        // Truly scanned page — render as image
-                        var png = RenderPageToPng(pdfDoc, i, 150);
-                        var b64 = Convert.ToBase64String(png);
-                        sb.Append($"<img class=\"scanned\" src=\"data:image/png;base64,{b64}\" alt=\"Page {i + 1}\"/>\n");
-                    }
+                    // Scanned / image-only page — render as a full-page image
+                    var png = RenderPageToPng(pdfDoc, i, 150);
+                    var b64 = Convert.ToBase64String(png);
+                    sb.Append($"<img class=\"scanned\" src=\"data:image/png;base64,{b64}\" alt=\"Page {i + 1}\"/>\n");
                 }
 
                 sb.Append("</div>\n");
@@ -229,6 +221,129 @@ public sealed class PdfExporter : IPdfExporter
         File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
         _logger.LogInformation("HTML export: {Path}", outputPath);
         return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
+    }
+
+    // ── Word-based page renderer (primary HTML path) ──────────────────────────
+
+    /// <summary>
+    /// Renders a single PDF page as semantic HTML using word-level extraction.
+    /// Word positions are always in correct visual order, avoiding scrambled-letter
+    /// artifacts that letter-level extraction can produce for some font encodings.
+    /// Tables and embedded images are detected and emitted as proper HTML elements.
+    /// </summary>
+    private static void HtmlRenderWordBasedPage(
+        StringBuilder sb,
+        UglyToad.PdfPig.Content.Page page,
+        IList<UglyToad.PdfPig.Content.Word> words)
+    {
+        // 1. Group words into rows, sort top-to-bottom (PDF Y is bottom-up).
+        var rows = GroupWordsIntoRows(words, 4.0)
+            .OrderByDescending(r => r.CenterY)
+            .ToList();
+        if (rows.Count == 0) return;
+
+        // 2. Detect table spans (rows where two columns are ≥30pt apart, ≥2 rows).
+        var tableSpans  = DetectTableSpans(rows, colGap: 30.0, minRows: 2);
+        var tableRowSet = new HashSet<int>(tableSpans.SelectMany(s => s));
+
+        // 3. Compute the median word-height (body font-size proxy) for heading detection.
+        double medianH = ComputeWordRowsMedianSize(rows);
+
+        // 4. Collect embedded images from the page.
+        var imgItems = new List<(double SortY, ImageBlock Block)>();
+        if (page.NumberOfImages > 0)
+        {
+            foreach (var img in page.GetImages())
+            {
+                if (img.IsImageMask) continue;
+                if (!img.TryGetPng(out var pngBytes)) continue;
+                double iw = img.Bounds.Width, ih = img.Bounds.Height;
+                if (iw < 20 || ih < 20) continue;
+                double midY = (img.Bounds.Bottom + img.Bounds.Top) / 2.0;
+                imgItems.Add((page.Height - midY,
+                    new ImageBlock(pngBytes, "image/png", iw, ih)));
+            }
+        }
+
+        // 5. Build an ordered work list: (sortY-top-down, render action).
+        var items = new List<(double SortY, Action Render)>();
+
+        // Text rows — accumulate consecutive paragraph rows into one <p>.
+        var paraBuf     = new List<string>();
+        double prevCY   = double.NaN;
+        double prevH    = medianH > 0 ? medianH : 12;
+
+        void FlushPara()
+        {
+            if (paraBuf.Count == 0) return;
+            string joined = HtmlEnc(string.Join(" ", paraBuf));
+            double sy     = page.Height - prevCY;
+            items.Add((sy, () => sb.AppendLine($"<p>{joined}</p>")));
+            paraBuf.Clear();
+        }
+
+        for (int ri = 0; ri < rows.Count; ri++)
+        {
+            if (tableRowSet.Contains(ri)) { FlushPara(); continue; }
+
+            var sortedW = rows[ri].Words.OrderBy(w => w.BoundingBox.Left).ToList();
+            string text = string.Join(" ", sortedW.Select(w => w.Text));
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            double rowH = GetWordsAverageFontSize(sortedW, prevH);
+            string? headingTag = null;
+            if (medianH > 0 && rowH > medianH * 1.4 && rowH > 8)
+            {
+                headingTag = rowH > medianH * 2.0 ? "h1"
+                           : rowH > medianH * 1.6 ? "h2" : "h3";
+            }
+
+            double cy = rows[ri].CenterY;
+
+            if (headingTag != null)
+            {
+                FlushPara();
+                string tag = headingTag, enc = HtmlEnc(text);
+                double sy = page.Height - cy;
+                items.Add((sy, () => sb.AppendLine($"<{tag}>{enc}</{tag}>")));
+            }
+            else
+            {
+                // Paragraph boundary: large Y gap → start a new <p>
+                bool newPara = !double.IsNaN(prevCY) &&
+                               Math.Abs(prevCY - cy) > prevH * 1.4 * 2.0;
+                if (newPara) FlushPara();
+                paraBuf.Add(text);
+                prevCY = cy;
+            }
+
+            prevH = rowH;
+        }
+        FlushPara();
+
+        // Table spans
+        foreach (var span in tableSpans)
+        {
+            double tableTopY = span.SelectMany(ri => rows[ri].Words)
+                                   .Max(w => w.BoundingBox.Top);
+            var capturedSpan = span;
+            items.Add((page.Height - tableTopY, () =>
+            {
+                var tbl = BuildTableBlock(rows, capturedSpan);
+                HtmlRenderTable(sb, tbl);
+            }));
+        }
+
+        // Embedded images
+        foreach (var (sy, imgBlock) in imgItems)
+        {
+            var captured = imgBlock;
+            items.Add((sy, () => HtmlRenderImage(sb, captured)));
+        }
+
+        // 6. Emit in top-to-bottom order.
+        foreach (var (_, render) in items.OrderBy(x => x.SortY))
+            render();
     }
 
     // ── HTML block rendering ──────────────────────────────────────────────────
