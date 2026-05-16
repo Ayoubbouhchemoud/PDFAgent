@@ -96,24 +96,19 @@ public sealed class PdfExporter : IPdfExporter
         return OperationResult.Ok($"Exported text → {Path.GetFileName(outputPath)}");
     }
 
-    // ── 2. HTML (.html) — two-layer: rendered page image + selectable text overlay ─
+    // ── 2. HTML (.html) — semantic document: real text, headings, tables, lists, images ─
 
     private OperationResult ExportHtml(
         string inputPath, string outputPath, ExportOptions opts,
         IProgress<(int, int)>? progress, CancellationToken ct)
     {
-        const int    renderDpi = 150;
-        const double ptToPx   = 96.0 / 72.0; // PDF points → CSS px
-
         using var pigDoc = UglyToad.PdfPig.PdfDocument.Open(inputPath);
-        using var pdfDoc = PdfiumViewer.PdfDocument.Load(inputPath);
         int total = pigDoc.NumberOfPages;
         var (start, end) = PageRange(opts, total);
-        string title = System.Net.WebUtility.HtmlEncode(
+        string title = HtmlEnc(
             pigDoc.Information.Title ?? Path.GetFileNameWithoutExtension(inputPath));
 
-        var sb = new StringBuilder(1024 * 64);
-        // $$"""...""" uses {{expr}} for interpolation so CSS single-braces are literal
+        var sb = new StringBuilder(1024 * 32);
         sb.Append($$"""
             <!DOCTYPE html>
             <html lang="en">
@@ -122,25 +117,59 @@ public sealed class PdfExporter : IPdfExporter
               <meta name="viewport" content="width=device-width,initial-scale=1"/>
               <title>{{title}}</title>
               <style>
-                *{box-sizing:border-box;margin:0;padding:0}
-                body{background:#525659;font-family:sans-serif;padding:20px 0}
-                .page{
-                  position:relative;margin:20px auto;background:#fff;
-                  box-shadow:0 4px 24px rgba(0,0,0,.5);overflow:hidden;display:block
+                *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+                body {
+                  font-family: Arial, Helvetica, sans-serif;
+                  font-size: 11pt;
+                  line-height: 1.5;
+                  background: #f0f0f0;
+                  color: #000;
+                  padding: 24px 16px;
                 }
-                .page>img.bg{
-                  display:block;width:100%;height:100%;
-                  position:absolute;top:0;left:0;
-                  pointer-events:none;user-select:none;-webkit-user-select:none
+                .page {
+                  background: #fff;
+                  max-width: 210mm;
+                  margin: 0 auto 28px;
+                  padding: 20mm;
+                  box-shadow: 0 2px 10px rgba(0,0,0,.18);
                 }
-                .tl{
-                  position:absolute;top:0;left:0;width:100%;height:100%;
-                  overflow:hidden;line-height:1;caret-color:#000
+                .page-num {
+                  font-size: 8pt;
+                  color: #999;
+                  text-align: right;
+                  margin-bottom: 12px;
                 }
-                .tl span{
-                  position:absolute;white-space:pre;
-                  color:transparent;transform-origin:0% 0%;
-                  cursor:text;user-select:text;-webkit-user-select:text
+                h1 { font-size: 20pt; font-weight: bold; margin: 0.5em 0 0.3em; }
+                h2 { font-size: 16pt; font-weight: bold; margin: 0.5em 0 0.3em; }
+                h3 { font-size: 13pt; font-weight: bold; margin: 0.4em 0 0.25em; }
+                p  { margin: 0.35em 0; }
+                p + p { margin-top: 0.6em; }
+                ul, ol { margin: 0.4em 0 0.4em 2em; }
+                li { margin: 0.2em 0; }
+                table {
+                  border-collapse: collapse;
+                  width: 100%;
+                  margin: 0.8em 0;
+                  font-size: 10pt;
+                }
+                th, td {
+                  border: 1px solid #b0b0b0;
+                  padding: 5px 9px;
+                  text-align: left;
+                  vertical-align: top;
+                }
+                th { background: #ebebeb; font-weight: bold; }
+                img.pdf-img {
+                  display: block;
+                  max-width: 100%;
+                  height: auto;
+                  margin: 0.8em auto;
+                }
+                .scanned {
+                  display: block;
+                  max-width: 100%;
+                  height: auto;
+                  margin: 0 auto;
                 }
               </style>
             </head>
@@ -148,59 +177,325 @@ public sealed class PdfExporter : IPdfExporter
             """);
         sb.AppendLine();
 
-        for (int i = start; i <= end; i++)
+        // Keep PdfiumViewer open once — only used if a page has no text layer (scanned)
+        PdfiumViewer.PdfDocument? pdfDoc = null;
+        try { pdfDoc = PdfiumViewer.PdfDocument.Load(inputPath); } catch { }
+
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var page = pigDoc.GetPage(i + 1); // 1-based
-            double pw  = page.Width;           // pts
-            double ph  = page.Height;          // pts
-            double wpx = pw * ptToPx;
-            double hpx = ph * ptToPx;
-
-            // Visual ground-truth: high-res rendered PNG embedded inline
-            var b64 = Convert.ToBase64String(RenderPageToPng(pdfDoc, i, renderDpi));
-
-            sb.Append($"<div class=\"page\" style=\"width:{wpx:F0}px;height:{hpx:F0}px\">\n");
-            sb.Append($"<img class=\"bg\" src=\"data:image/png;base64,{b64}\" alt=\"Page {i + 1}\"/>\n");
-            sb.Append("<div class=\"tl\">\n");
-
-            // Selectable text overlay — one span per word, positioned to match the image
-            var words = page.GetWords().ToList();
-            foreach (var word in words)
+            for (int i = start; i <= end; i++)
             {
-                if (string.IsNullOrWhiteSpace(word.Text)) continue;
+                ct.ThrowIfCancellationRequested();
+                var page = pigDoc.GetPage(i + 1);
 
-                double x   = word.BoundingBox.Left * ptToPx;
-                // PDF Y is bottom-up; CSS Y is top-down → flip via page height
-                double y   = (ph - word.BoundingBox.Top) * ptToPx;
-                double ww  = word.BoundingBox.Width  * ptToPx;
-                double fss = word.BoundingBox.Height * ptToPx;
+                sb.Append($"<div class=\"page\" id=\"page{i + 1}\">\n");
+                if (total > 1)
+                    sb.Append($"<p class=\"page-num\">Page {i + 1} / {total}</p>\n");
 
-                // Use actual font point size when available for a tighter text overlay
-                if (word.Letters.Count > 0 && word.Letters[0].FontSize > 0)
-                    fss = word.Letters[0].FontSize * ptToPx;
-                if (fss < 4) fss = 4;
+                if (page.Letters.Count > 0)
+                {
+                    // Text PDF — structured semantic extraction
+                    var docPage = AnalyzePage(page);
+                    HtmlRenderBlocks(sb, docPage.Blocks);
+                }
+                else
+                {
+                    // No letter-level info: try word-level extraction first (handles
+                    // PDFs whose fonts PdfPig can read as words but not letters)
+                    var words = page.GetWords().ToList();
+                    if (words.Count > 0)
+                    {
+                        HtmlRenderWordsAsText(sb, words);
+                    }
+                    else if (pdfDoc != null)
+                    {
+                        // Truly scanned page — render as image
+                        var png = RenderPageToPng(pdfDoc, i, 150);
+                        var b64 = Convert.ToBase64String(png);
+                        sb.Append($"<img class=\"scanned\" src=\"data:image/png;base64,{b64}\" alt=\"Page {i + 1}\"/>\n");
+                    }
+                }
 
-                // scaleX stretches the transparent span to cover the word glyph width,
-                // so text selection aligns with the visible characters underneath
-                double estWidth = word.Text.Length * fss * 0.55;
-                double scaleX   = estWidth > 0 && ww > 0
-                    ? Math.Clamp(ww / estWidth, 0.1, 8.0)
-                    : 1.0;
-
-                var txt = System.Net.WebUtility.HtmlEncode(word.Text);
-                sb.Append($"<span style=\"left:{x:F1}px;top:{y:F1}px;font-size:{fss:F1}px;transform:scaleX({scaleX:F3})\">{txt}</span>\n");
+                sb.Append("</div>\n");
+                progress?.Report((i - start + 1, end - start + 1));
             }
-
-            sb.Append("</div>\n</div>\n");
-            progress?.Report((i - start + 1, end - start + 1));
+        }
+        finally
+        {
+            pdfDoc?.Dispose();
         }
 
-        sb.Append("\n</body>\n</html>");
+        sb.Append("</body>\n</html>");
         File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
         _logger.LogInformation("HTML export: {Path}", outputPath);
         return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
     }
+
+    // ── HTML block rendering ──────────────────────────────────────────────────
+
+    private static void HtmlRenderBlocks(StringBuilder sb, IReadOnlyList<DocBlock> blocks)
+    {
+        foreach (var block in blocks)
+        {
+            switch (block.Kind)
+            {
+                case DocBlockKind.TextLines:
+                    HtmlRenderTextLines(sb, block.Lines!);
+                    break;
+                case DocBlockKind.Table:
+                    HtmlRenderTable(sb, block.Table!);
+                    break;
+                case DocBlockKind.Image:
+                    HtmlRenderImage(sb, block.Image!);
+                    break;
+            }
+        }
+    }
+
+    private static void HtmlRenderTextLines(StringBuilder sb, IReadOnlyList<TextLine> lines)
+    {
+        var paraBuf   = new List<TextLine>(); // accumulates lines for one <p>
+        var listBuf   = new List<TextLine>(); // accumulates consecutive list items
+        LineType listType = LineType.BulletItem;
+
+        void FlushPara()
+        {
+            if (paraBuf.Count == 0) return;
+            sb.Append("<p>");
+            for (int k = 0; k < paraBuf.Count; k++)
+            {
+                if (k > 0) sb.Append(' '); // single space between wrapped lines
+                HtmlRenderRuns(sb, paraBuf[k].Runs);
+            }
+            sb.AppendLine("</p>");
+            paraBuf.Clear();
+        }
+
+        void FlushList()
+        {
+            if (listBuf.Count == 0) return;
+            sb.AppendLine(listType == LineType.BulletItem ? "<ul>" : "<ol>");
+            foreach (var li in listBuf)
+            {
+                sb.Append("<li>");
+                HtmlRenderRuns(sb, li.Runs);
+                sb.AppendLine("</li>");
+            }
+            sb.AppendLine(listType == LineType.BulletItem ? "</ul>" : "</ol>");
+            listBuf.Clear();
+        }
+
+        foreach (var line in lines)
+        {
+            bool empty = line.Runs.Count == 0 ||
+                         line.Runs.All(r => string.IsNullOrWhiteSpace(r.Text));
+            if (empty) { FlushPara(); FlushList(); continue; }
+
+            switch (line.Type)
+            {
+                case LineType.Heading1:
+                case LineType.Heading2:
+                case LineType.Heading3:
+                    FlushPara(); FlushList();
+                    string tag = line.Type == LineType.Heading1 ? "h1"
+                               : line.Type == LineType.Heading2 ? "h2" : "h3";
+                    sb.Append($"<{tag}>");
+                    HtmlRenderRuns(sb, line.Runs);
+                    sb.AppendLine($"</{tag}>");
+                    break;
+
+                case LineType.BulletItem:
+                    FlushPara();
+                    if (listBuf.Count > 0 && listType != LineType.BulletItem) FlushList();
+                    listType = LineType.BulletItem;
+                    listBuf.Add(line);
+                    break;
+
+                case LineType.NumberedItem:
+                    FlushPara();
+                    if (listBuf.Count > 0 && listType != LineType.NumberedItem) FlushList();
+                    listType = LineType.NumberedItem;
+                    listBuf.Add(line);
+                    break;
+
+                default: // Paragraph
+                    FlushList();
+
+                    // Detect paragraph boundary: gap between baselines > 1.8× line height
+                    if (paraBuf.Count > 0 && line.BaselineY > 0 && paraBuf[^1].BaselineY > 0)
+                    {
+                        double gap      = paraBuf[^1].BaselineY - line.BaselineY; // positive = going down
+                        double lineH    = Math.Max(paraBuf[^1].MaxSizePt, 6) * 1.4;
+                        if (gap > lineH * 1.8)
+                            FlushPara();
+                    }
+                    paraBuf.Add(line);
+                    break;
+            }
+        }
+        FlushPara();
+        FlushList();
+    }
+
+    private static void HtmlRenderRuns(StringBuilder sb, IReadOnlyList<TextRun> runs)
+    {
+        foreach (var run in runs)
+        {
+            if (string.IsNullOrEmpty(run.Text)) continue;
+            string encoded = HtmlEnc(run.Text);
+
+            var css = new List<string>(5);
+            if (!string.IsNullOrEmpty(run.FontFamily) && run.FontFamily != "sans-serif")
+                css.Add($"font-family:'{run.FontFamily}'");
+            if (run.SizePt >= 4)
+                css.Add(FormattableString.Invariant($"font-size:{run.SizePt:F1}pt"));
+            if (run.Bold)
+                css.Add("font-weight:bold");
+            if (run.Italic)
+                css.Add("font-style:italic");
+            if (!string.IsNullOrEmpty(run.ColorHex) && run.ColorHex != "000000")
+                css.Add($"color:#{run.ColorHex}");
+
+            if (css.Count > 0)
+                sb.Append($"<span style=\"{string.Join(';', css)}\">{encoded}</span>");
+            else
+                sb.Append(encoded);
+        }
+    }
+
+    private static void HtmlRenderTable(StringBuilder sb, TableBlock tbl)
+    {
+        sb.AppendLine("<table>");
+        for (int ri = 0; ri < tbl.Rows.Count; ri++)
+        {
+            var row = tbl.Rows[ri];
+            if (ri == 0)           sb.AppendLine("<thead>");
+            else if (ri == 1)      sb.AppendLine("<tbody>");
+
+            sb.Append("<tr>");
+            string cellTag = ri == 0 ? "th" : "td";
+            foreach (var cellRuns in row.Cells)
+            {
+                sb.Append($"<{cellTag}>");
+                HtmlRenderRuns(sb, cellRuns);
+                sb.Append($"</{cellTag}>");
+            }
+            sb.AppendLine("</tr>");
+
+            if (ri == 0) sb.AppendLine("</thead>");
+        }
+        if (tbl.Rows.Count > 1) sb.AppendLine("</tbody>");
+        sb.AppendLine("</table>");
+    }
+
+    private static void HtmlRenderImage(StringBuilder sb, ImageBlock img)
+    {
+        string b64      = Convert.ToBase64String(img.Data);
+        string mime     = img.MediaType;
+        string maxStyle = img.WidthPt > 0 ? $" style=\"max-width:{img.WidthPt:F0}pt\"" : "";
+        sb.AppendLine($"<img class=\"pdf-img\"{maxStyle} src=\"data:{mime};base64,{b64}\" alt=\"\"/>");
+    }
+
+    /// <summary>
+    /// Word-level fallback renderer: groups words into rows, detects headings by font size
+    /// (or bounding-box height when letter-level font info is unavailable), and emits
+    /// semantic &lt;p&gt; / &lt;h1–h3&gt; elements.
+    /// </summary>
+    private static void HtmlRenderWordsAsText(
+        StringBuilder sb,
+        IList<UglyToad.PdfPig.Content.Word> words)
+    {
+        var rowGroups = GroupWordsIntoRows(words, 4.0)
+            .OrderByDescending(r => r.CenterY)
+            .ToList();
+        if (rowGroups.Count == 0) return;
+
+        double medianSize = ComputeWordRowsMedianSize(rowGroups);
+        var    paraBuf    = new List<string>();
+        double prevCenterY = double.NaN;
+        double prevSize    = medianSize > 0 ? medianSize : 12;
+
+        void FlushPara()
+        {
+            if (paraBuf.Count == 0) return;
+            sb.AppendLine($"<p>{HtmlEnc(string.Join(" ", paraBuf))}</p>");
+            paraBuf.Clear();
+        }
+
+        foreach (var (centerY, rowWords) in rowGroups)
+        {
+            var sortedRow = rowWords.OrderBy(w => w.BoundingBox.Left).ToList();
+            string text   = string.Join(" ", sortedRow.Select(w => w.Text));
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            double rowSize = GetWordsAverageFontSize(sortedRow, prevSize);
+
+            string? headingTag = null;
+            if (medianSize > 0 && rowSize > medianSize * 1.4 && rowSize > 8)
+            {
+                headingTag = rowSize > medianSize * 2.0 ? "h1"
+                           : rowSize > medianSize * 1.6 ? "h2" : "h3";
+            }
+
+            // Large Y gap between rows → paragraph break
+            bool newPara = !double.IsNaN(prevCenterY) &&
+                           Math.Abs(prevCenterY - centerY) > prevSize * 1.4 * 2.0;
+            if (newPara) FlushPara();
+
+            if (headingTag != null)
+            {
+                FlushPara();
+                sb.AppendLine($"<{headingTag}>{HtmlEnc(text)}</{headingTag}>");
+            }
+            else
+            {
+                paraBuf.Add(text);
+            }
+
+            prevCenterY = centerY;
+            prevSize    = rowSize;
+        }
+        FlushPara();
+    }
+
+    private static double GetWordsAverageFontSize(
+        IList<UglyToad.PdfPig.Content.Word> words, double fallback)
+    {
+        var sizes = words.SelectMany(w => w.Letters)
+                         .Select(l => l.FontSize)
+                         .Where(s => s >= 4)
+                         .ToList();
+        if (sizes.Count > 0) return sizes.Average();
+        // Letter font data unavailable — estimate from word bounding-box height
+        var heights = words.Where(w => w.BoundingBox.Height >= 2)
+                           .Select(w => w.BoundingBox.Height)
+                           .ToList();
+        return heights.Count > 0 ? heights.Average() : fallback;
+    }
+
+    private static double ComputeWordRowsMedianSize(
+        IReadOnlyList<(double CenterY, List<UglyToad.PdfPig.Content.Word> Words)> rowGroups)
+    {
+        var sizes = rowGroups.SelectMany(r => r.Words)
+                             .SelectMany(w => w.Letters)
+                             .Select(l => l.FontSize)
+                             .Where(s => s >= 4)
+                             .OrderBy(s => s)
+                             .ToList();
+        if (sizes.Count == 0)
+        {
+            // Fallback: bounding-box heights give a reasonable size proxy
+            sizes = rowGroups.SelectMany(r => r.Words)
+                             .Select(w => w.BoundingBox.Height)
+                             .Where(h => h >= 2)
+                             .OrderBy(h => h)
+                             .ToList();
+        }
+        if (sizes.Count == 0) return 12;
+        return sizes[(sizes.Count - 1) / 2];
+    }
+
+    private static string HtmlEnc(string s) => System.Net.WebUtility.HtmlEncode(s);
 
     // ── 3. EPUB (.epub) ───────────────────────────────────────────────────────
 
@@ -871,6 +1166,10 @@ public sealed class PdfExporter : IPdfExporter
             : 40.0;
         textLines = ClassifyLines(textLines, leftMargin);
 
+        // Promote lines with significantly larger font to heading types
+        double medianSz = ComputeTextMedianSize(textLines);
+        textLines = ClassifyHeadings(textLines, medianSz);
+
         // ── 4. Extract images ────────────────────────────────────────────────
         var images = new List<(double MidY, ImageBlock Block)>();
         if (page.NumberOfImages > 0)
@@ -1085,7 +1384,35 @@ public sealed class PdfExporter : IPdfExporter
         return result;
     }
 
-    // ── List & heading classification ─────────────────────────────────────────
+    // ── Heading & list classification ────────────────────────────────────────
+
+    private static double ComputeTextMedianSize(List<TextLine> lines)
+    {
+        // Weight each run's size by its character count so that body-text runs
+        // (many characters) dominate the median over short heading runs.
+        var sizes = lines
+            .SelectMany(l => l.Runs)
+            .Where(r => r.SizePt >= 4 && !string.IsNullOrEmpty(r.Text))
+            .SelectMany(r => Enumerable.Repeat(r.SizePt, Math.Max(1, r.Text.Length)))
+            .OrderBy(s => s)
+            .ToList();
+        if (sizes.Count == 0) return 12;
+        return sizes[(sizes.Count - 1) / 2];
+    }
+
+    private static List<TextLine> ClassifyHeadings(List<TextLine> lines, double medianSize)
+    {
+        if (medianSize <= 0) return lines;
+        return lines.Select(line =>
+        {
+            if (line.Type != LineType.Paragraph) return line; // don't override list types
+            if (line.MaxSizePt <= medianSize * 1.4 || line.MaxSizePt <= 8) return line;
+            var type = line.MaxSizePt > medianSize * 2.0 ? LineType.Heading1
+                     : line.MaxSizePt > medianSize * 1.6 ? LineType.Heading2
+                     : LineType.Heading3;
+            return line with { Type = type };
+        }).ToList();
+    }
 
     private static readonly HashSet<char> BulletChars = new("•·▪▸▶‒–—◦○●■□◆◇");
 
@@ -1112,9 +1439,8 @@ public sealed class PdfExporter : IPdfExporter
         // Bullet list detection
         if (BulletChars.Contains(firstChar))
         {
-            // Strip the bullet character and leading space from the first run
             var strippedRuns = StripPrefix(line.Runs, 1);
-            return new TextLine(strippedRuns, line.MaxSizePt, LineType.BulletItem, 0);
+            return new TextLine(strippedRuns, line.MaxSizePt, LineType.BulletItem, 0, line.BaselineY);
         }
 
         // Dash/hyphen bullet (only if short prefix and followed by space)
@@ -1122,14 +1448,14 @@ public sealed class PdfExporter : IPdfExporter
             firstText.Length >= 2 && firstText[1] == ' ')
         {
             var strippedRuns = StripPrefix(line.Runs, 2);
-            return new TextLine(strippedRuns, line.MaxSizePt, LineType.BulletItem, 0);
+            return new TextLine(strippedRuns, line.MaxSizePt, LineType.BulletItem, 0, line.BaselineY);
         }
 
         // Numbered list: "1. ", "1) ", "(1) ", "a. ", "i. ", etc.
         if (IsNumberedListPrefix(firstText, out int prefixLen))
         {
             var strippedRuns = StripPrefix(line.Runs, prefixLen);
-            return new TextLine(strippedRuns, line.MaxSizePt, LineType.NumberedItem, 0);
+            return new TextLine(strippedRuns, line.MaxSizePt, LineType.NumberedItem, 0, line.BaselineY);
         }
 
         return line;
@@ -1213,22 +1539,22 @@ public sealed class PdfExporter : IPdfExporter
             if (Math.Abs(y - currentLineY) > 4.0)
             {
                 if (lineLetters.Count > 0)
-                    result.Add(BuildTextLine(lineLetters));
+                    result.Add(BuildTextLine(lineLetters, currentLineY));
                 lineLetters.Clear();
                 currentLineY = y;
             }
             lineLetters.Add(letter);
         }
         if (lineLetters.Count > 0)
-            result.Add(BuildTextLine(lineLetters));
+            result.Add(BuildTextLine(lineLetters, currentLineY));
 
         return result;
     }
 
-    private static TextLine BuildTextLine(List<UglyToad.PdfPig.Content.Letter> letters)
+    private static TextLine BuildTextLine(List<UglyToad.PdfPig.Content.Letter> letters, double baselineY = 0)
     {
         var runs = new List<TextRun>();
-        if (letters.Count == 0) return new TextLine(runs, 0);
+        if (letters.Count == 0) return new TextLine(runs, 0, LineType.Paragraph, 0, baselineY);
 
         var    text         = new StringBuilder();
         string curFont      = letters[0].FontName ?? "";
@@ -1281,7 +1607,7 @@ public sealed class PdfExporter : IPdfExporter
         FlushRun();
 
         double maxSize = runs.Count > 0 ? runs.Max(r => r.SizePt) : 0;
-        return new TextLine(runs, maxSize);
+        return new TextLine(runs, maxSize, LineType.Paragraph, 0, baselineY);
     }
 
     private static bool IsBoldFont(string fontName) =>

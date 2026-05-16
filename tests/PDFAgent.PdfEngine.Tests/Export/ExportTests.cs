@@ -304,58 +304,115 @@ public sealed class ExportTests : IDisposable
     // Quality-verification tests — prove the improved fidelity of each format
     // ════════════════════════════════════════════════════════════════════════
 
-    // ── HTML quality ──────────────────────────────────────────────────────────
+    // ── HTML quality — semantic document, NOT image-overlay viewer ───────────
 
     [Fact]
-    public async Task ExportHtml_EmbeddsRenderedPageAsBase64Png()
+    public async Task ExportHtml_ContainsRealText_NotTransparentOverlay()
     {
-        var dest = Path.Combine(_dir, "quality_html.html");
+        // The new approach generates semantic HTML — text must be real, not invisible
+        var dest = Path.Combine(_dir, "quality_real_text.html");
         var r    = await Export(ExportFormat.Html, dest);
 
         r.IsSuccess.Should().BeTrue(r.Message);
         var html = File.ReadAllText(dest, Encoding.UTF8);
 
-        // The two-layer approach embeds a high-res rendered PNG per page
-        html.Should().Contain("data:image/png;base64,",
-            "each page must have a rendered PNG as the visual background");
-        html.Should().Contain("class=\"bg\"",
-            "rendered background image must carry the .bg class");
+        // Real text must appear inside semantic elements — at least one <p>/<hN> with content.
+        // Text may be wrapped in <span> for styling, so we strip child tags before checking.
+        var firstBlockMatch = System.Text.RegularExpressions.Regex.Match(
+            html, @"<(?:p|h[1-3])[^>]*>([\s\S]*?)</(?:p|h[1-3])>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        bool hasParagraphWithText = firstBlockMatch.Success &&
+            System.Text.RegularExpressions.Regex.Replace(
+                firstBlockMatch.Groups[1].Value, @"<[^>]+>", "").Trim().Length > 0;
+        hasParagraphWithText.Should().BeTrue(
+            "HTML must contain semantic elements (<p> or <h1>-<h3>) with actual text content");
+        // Must NOT use the old transparent-span overlay approach
+        html.Should().NotContain("color:transparent",
+            "text must be real content, not a transparent overlay on a rendered image");
+        html.Should().NotContain("class=\"tl\"",
+            "the old text-layer overlay div must not be present");
     }
 
     [Fact]
-    public async Task ExportHtml_HasSelectableTextLayer()
+    public async Task ExportHtml_HasSemanticParagraphElements()
     {
-        var dest = Path.Combine(_dir, "quality_tl.html");
+        var dest = Path.Combine(_dir, "quality_p.html");
         var r    = await Export(ExportFormat.Html, dest);
 
         r.IsSuccess.Should().BeTrue(r.Message);
         var html = File.ReadAllText(dest, Encoding.UTF8);
 
-        // The text layer div (.tl) carries transparent selectable spans
-        html.Should().Contain("class=\"tl\"",
-            "a text-layer div must be present for selectability");
-        html.Should().Contain("color:transparent",
-            "text spans must be transparent so the image is the visual source");
-        html.Should().Contain("user-select:text",
-            "text must remain selectable/copyable");
+        // Body text must appear inside <p> elements
+        html.Should().Contain("<p>",
+            "body text must be wrapped in paragraph elements");
+        html.Should().Contain("</p>",
+            "paragraph elements must be properly closed");
     }
 
     [Fact]
-    public async Task ExportHtml_FileIsLargerThanRawText_ProvingImageIsEmbedded()
+    public async Task ExportHtml_LargeTextBecomesHeadingElement()
     {
-        // Export as HTML
-        var htmlDest = Path.Combine(_dir, "quality_size.html");
-        await Export(ExportFormat.Html, htmlDest);
-        // Export as plain text for comparison
-        var txtDest = Path.Combine(_dir, "quality_size.txt");
-        await Export(ExportFormat.Txt, txtDest);
+        // Build a PDF with a clear heading (large font) and body text (smaller font)
+        var headingPdf = Path.Combine(_dir, "heading_test.pdf");
+        CreateHeadingPdf(headingPdf,
+            headingText: "Main Report Title",
+            headingSize: 24,
+            bodyText:    "This is body content.",
+            bodySize:    11);
 
-        long htmlSize = new FileInfo(htmlDest).Length;
-        long txtSize  = new FileInfo(txtDest).Length;
+        var dest = Path.Combine(_dir, "quality_heading.html");
+        var r    = await _exporter.ExportAsync(headingPdf, dest, ExportFormat.Html,
+            new ExportOptions { AllPages = true, Dpi = 72 });
 
-        // HTML with embedded PNG must be much larger than plain text
-        htmlSize.Should().BeGreaterThan(txtSize * 10,
-            "embedded page PNG should make HTML significantly larger than TXT");
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+
+        // Large text must be promoted to a heading element with real content.
+        // Text inside headings may be wrapped in <span> for styling — strip tags before checking.
+        var headingMatch = System.Text.RegularExpressions.Regex.Match(
+            html, @"<h([1-3])[^>]*>([\s\S]*?)</h\1>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        bool hasHeadingWithContent = headingMatch.Success &&
+            System.Text.RegularExpressions.Regex.Replace(
+                headingMatch.Groups[2].Value, @"<[^>]+>", "").Trim().Length > 0;
+        hasHeadingWithContent.Should().BeTrue(
+            "text with significantly larger font size must become a heading element with content");
+    }
+
+    [Fact]
+    public async Task ExportHtml_TableStructureBecomesHtmlTable()
+    {
+        // Two-column PDF with aligned rows → must produce a <table>
+        var tablePdf = Path.Combine(_dir, "table_test.pdf");
+        CreateTwoColumnPdf(tablePdf);
+
+        var dest = Path.Combine(_dir, "quality_table.html");
+        var r    = await _exporter.ExportAsync(tablePdf, dest, ExportFormat.Html,
+            new ExportOptions { AllPages = true, Dpi = 72 });
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+
+        html.Should().Contain("<table>",
+            "multi-column aligned content must be rendered as an HTML table");
+        html.Should().Contain("<th>",
+            "first row of a detected table must use header cells");
+        html.Should().Contain("</table>",
+            "table element must be properly closed");
+    }
+
+    [Fact]
+    public async Task ExportHtml_PageDivWrapsEachPage()
+    {
+        var dest = Path.Combine(_dir, "quality_pages.html");
+        var r    = await Export(ExportFormat.Html, dest);
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+
+        // One .page div per PDF page
+        int pageCount = System.Text.RegularExpressions.Regex.Matches(html, "class=\"page\"").Count;
+        pageCount.Should().Be(2, "source PDF has 2 pages — each must produce a .page div");
     }
 
     // ── DOCX quality — DocxBuilder tested directly, independent of Word COM ────
@@ -514,6 +571,23 @@ public sealed class ExportTests : IDisposable
             new PdfSharp.Drawing.XPoint(50, 90));
         gfx.DrawString("RightValue",  font, PdfSharp.Drawing.XBrushes.Black,
             new PdfSharp.Drawing.XPoint(350, 90));
+        doc.Save(path);
+    }
+
+    private static void CreateHeadingPdf(
+        string path, string headingText, int headingSize, string bodyText, int bodySize)
+    {
+        using var doc  = new PdfDocument();
+        var page = doc.AddPage();
+        using var gfx  = PdfSharp.Drawing.XGraphics.FromPdfPage(page);
+        // Heading: large font at the top
+        var headFont = new PdfSharp.Drawing.XFont("Arial", headingSize, PdfSharp.Drawing.XFontStyleEx.Bold);
+        gfx.DrawString(headingText, headFont, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 60));
+        // Body: smaller font below
+        var bodyFont = new PdfSharp.Drawing.XFont("Arial", bodySize);
+        gfx.DrawString(bodyText, bodyFont, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 120));
         doc.Save(path);
     }
 }
