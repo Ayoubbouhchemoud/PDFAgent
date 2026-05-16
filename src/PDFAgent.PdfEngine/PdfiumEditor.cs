@@ -799,4 +799,212 @@ public sealed class PdfiumEditor : IPdfEditor
             }
         }, ct);
     }
+
+    // ── Convert to PDF ───────────────────────────────────────────────────────
+
+    private static readonly HashSet<string> _imageExts =
+        new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif" };
+    private static readonly HashSet<string> _wordExts =
+        new(StringComparer.OrdinalIgnoreCase) { ".doc", ".docx" };
+    private static readonly HashSet<string> _excelExts =
+        new(StringComparer.OrdinalIgnoreCase) { ".xls", ".xlsx" };
+    private static readonly HashSet<string> _pptExts =
+        new(StringComparer.OrdinalIgnoreCase) { ".ppt", ".pptx" };
+
+    public async Task<OperationResult> ConvertToPdfAsync(
+        string inputPath, string outputPath, CancellationToken ct = default)
+    {
+        var ext = Path.GetExtension(inputPath).ToLowerInvariant();
+
+        if (_imageExts.Contains(ext))
+            return await ConvertImagesToPdfAsync(new[] { inputPath }, outputPath, null, ct);
+
+        if (_wordExts.Contains(ext))
+            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.Word, ct);
+
+        if (_excelExts.Contains(ext))
+            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.Excel, ct);
+
+        if (_pptExts.Contains(ext))
+            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.PowerPoint, ct);
+
+        if (ext == ".txt")
+            return await ConvertTextToPdfAsync(inputPath, outputPath, ct);
+
+        return OperationResult.Fail($"Unsupported file type: {ext}");
+    }
+
+    public async Task<OperationResult> ConvertImagesToPdfAsync(
+        IReadOnlyList<string> imagePaths, string outputPath,
+        IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            var keepAlive = new List<MemoryStream>();
+            try
+            {
+                using var output = new PdfDocument();
+
+                for (var i = 0; i < imagePaths.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    using var bmp = new System.Drawing.Bitmap(imagePaths[i]);
+
+                    var ms = new MemoryStream();
+                    bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    ms.Position = 0;
+                    keepAlive.Add(ms);
+
+                    var page = output.AddPage();
+                    var xImg = XImage.FromStream(ms);
+                    // Keep original aspect ratio; use 96 dpi as canonical screen resolution
+                    page.Width  = XUnit.FromPoint(xImg.PixelWidth  * 72.0 / Math.Max(1, xImg.HorizontalResolution));
+                    page.Height = XUnit.FromPoint(xImg.PixelHeight * 72.0 / Math.Max(1, xImg.VerticalResolution));
+
+                    using var gfx = XGraphics.FromPdfPage(page);
+                    gfx.DrawImage(xImg, 0, 0, page.Width.Point, page.Height.Point);
+
+                    progress?.Report((i + 1.0) / imagePaths.Count);
+                }
+
+                output.Save(outputPath);
+                return OperationResult.Ok($"Converted {imagePaths.Count} image(s) → {Path.GetFileName(outputPath)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ConvertImages failed");
+                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
+                return OperationResult.Fail($"Image conversion failed: {ex.Message}");
+            }
+            finally
+            {
+                foreach (var s in keepAlive) try { s.Dispose(); } catch { }
+            }
+        }, ct);
+    }
+
+    private enum OfficeApp { Word, Excel, PowerPoint }
+
+    private Task<OperationResult> ConvertOfficeDocAsync(
+        string inputPath, string outputPath, OfficeApp app, CancellationToken ct)
+    {
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                string? result = app switch
+                {
+                    OfficeApp.Word       => WordConverter.ConvertToPdf(inputPath),
+                    OfficeApp.Excel      => ExcelConverter.ConvertToPdf(inputPath),
+                    OfficeApp.PowerPoint => PowerPointConverter.ConvertToPdf(inputPath),
+                    _                    => null,
+                };
+
+                if (result == null)
+                    return OperationResult.Fail(
+                        $"Could not convert '{Path.GetFileName(inputPath)}'. " +
+                        $"Ensure Microsoft {app} is installed.");
+
+                File.Move(result, outputPath, overwrite: true);
+                _logger.LogInformation("Office→PDF: {In} → {Out}", inputPath, outputPath);
+                return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ConvertOffice({App}) failed", app);
+                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
+                return OperationResult.Fail($"Conversion failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
+    private Task<OperationResult> ConvertTextToPdfAsync(
+        string inputPath, string outputPath, CancellationToken ct)
+    {
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var lines = File.ReadAllLines(inputPath, System.Text.Encoding.UTF8);
+                using var output = new PdfDocument();
+
+                const double marginPt    = 56.7; // 2 cm
+                const double fontSizePt  = 11;
+                const double lineHeightPt = fontSizePt * 1.4;
+                var font = new XFont("Courier New", fontSizePt);
+
+                // A4 page
+                const double pageWidthPt  = 595.28;
+                const double pageHeightPt = 841.89;
+                var usableWidth  = pageWidthPt  - 2 * marginPt;
+                var usableHeight = pageHeightPt - 2 * marginPt;
+                var linesPerPage = (int)(usableHeight / lineHeightPt);
+
+                PdfPage? page = null;
+                XGraphics? gfx = null;
+                var lineOnPage = 0;
+
+                foreach (var rawLine in lines)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Word-wrap long lines
+                    var wrapped = WrapLine(rawLine, font, usableWidth);
+                    foreach (var subLine in wrapped)
+                    {
+                        if (page == null || lineOnPage >= linesPerPage)
+                        {
+                            gfx?.Dispose();
+                            page = output.AddPage();
+                            page.Width  = XUnit.FromPoint(pageWidthPt);
+                            page.Height = XUnit.FromPoint(pageHeightPt);
+                            gfx = XGraphics.FromPdfPage(page);
+                            lineOnPage = 0;
+                        }
+
+                        var y = marginPt + lineOnPage * lineHeightPt + fontSizePt;
+                        gfx!.DrawString(subLine, font, XBrushes.Black,
+                            new XRect(marginPt, y, usableWidth, lineHeightPt),
+                            XStringFormats.TopLeft);
+                        lineOnPage++;
+                    }
+                }
+                gfx?.Dispose();
+
+                output.Save(outputPath);
+                _logger.LogInformation("TXT→PDF: {In} → {Out}", inputPath, outputPath);
+                return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ConvertText failed");
+                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
+                return OperationResult.Fail($"Text conversion failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
+    private static IEnumerable<string> WrapLine(string line, XFont font, double maxWidth)
+    {
+        if (string.IsNullOrEmpty(line)) { yield return string.Empty; yield break; }
+
+        // Rough estimate: measure using a throwaway graphics context
+        // XGraphics measurement requires a real context; use char-count heuristic instead
+        // (Courier New is monospace — all chars same width)
+        var charWidth = maxWidth / 85; // approx chars at 11pt Courier, 470pt wide
+        var maxChars  = Math.Max(10, (int)(maxWidth / charWidth));
+
+        var remaining = line;
+        while (remaining.Length > maxChars)
+        {
+            var split = remaining.LastIndexOf(' ', maxChars);
+            if (split <= 0) split = maxChars;
+            yield return remaining[..split];
+            remaining = remaining[split..].TrimStart();
+        }
+        yield return remaining;
+    }
 }

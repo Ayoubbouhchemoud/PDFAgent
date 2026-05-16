@@ -55,6 +55,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ConvertToPdfCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -721,6 +722,73 @@ public sealed partial class MainViewModel : ObservableObject
         if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:N1} MB";
         if (bytes >= 1_024)     return $"{bytes / 1_024.0:N0} KB";
         return $"{bytes} B";
+    }
+
+    // ── Convert to PDF ───────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanConvert))]
+    private async Task ConvertToPdfAsync()
+    {
+        var files = _fileDialog.OpenForConversion();
+        if (files.Count == 0) return;
+
+        IsBusy = true;
+        try
+        {
+            // Multiple images → combine into one PDF
+            var imageExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif" };
+
+            if (files.Count > 1 && files.All(f => imageExts.Contains(Path.GetExtension(f))))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(files[0]);
+                var output   = _fileDialog.SavePdf($"{baseName}_combined.pdf");
+                if (output == null) return;
+
+                StatusText = $"Combining {files.Count} images…";
+                var progress = new Progress<double>(p => StatusText = $"Converting… {p:P0}");
+                var result   = await _pdfEditor.ConvertImagesToPdfAsync(files, output, progress);
+                StatusText   = result.IsSuccess
+                    ? $"Done — {result.Message}"
+                    : $"Failed: {result.Message}";
+                if (result.IsSuccess) await TryOpenResultAsync(output);
+                return;
+            }
+
+            // Single file or mixed types — convert each individually
+            foreach (var file in files)
+            {
+                var baseName = Path.GetFileNameWithoutExtension(file);
+                var output   = _fileDialog.SavePdf($"{baseName}.pdf");
+                if (output == null) continue;
+
+                StatusText = $"Converting {Path.GetFileName(file)}…";
+                var result = await _pdfEditor.ConvertToPdfAsync(file, output);
+                StatusText = result.IsSuccess
+                    ? $"Done — {result.Message}"
+                    : $"Failed: {result.Message}";
+                if (result.IsSuccess && files.Count == 1)
+                    await TryOpenResultAsync(output);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ConvertToPdf failed");
+            StatusText = $"Conversion error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    private bool CanConvert() => !IsBusy;
+
+    private async Task TryOpenResultAsync(string pdfPath)
+    {
+        var open = System.Windows.MessageBox.Show(
+            $"Conversion complete.\n\nOpen '{Path.GetFileName(pdfPath)}' in PDF Agent?",
+            "Convert to PDF", System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+        if (open == System.Windows.MessageBoxResult.Yes)
+            await OpenFileAsync(pdfPath);
     }
 
     public event EventHandler?    SignRequested;

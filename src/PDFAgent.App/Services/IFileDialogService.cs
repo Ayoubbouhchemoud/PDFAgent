@@ -31,6 +31,9 @@ public interface IFileDialogService
 
     /// <summary>Shows the Add Page dialog. Returns null if cancelled.</summary>
     AddPageDialogResult? ShowAddPageDialog(int currentPage, int totalPages, double currentWidthPts, double currentHeightPts);
+
+    /// <summary>Opens a file picker for "Convert to PDF" — images, Word, Excel, PowerPoint, TXT.</summary>
+    IReadOnlyList<string> OpenForConversion();
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>

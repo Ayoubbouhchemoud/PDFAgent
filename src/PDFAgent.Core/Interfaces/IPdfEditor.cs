@@ -32,6 +32,22 @@ public interface IPdfEditor
         int jpegQuality,
         IProgress<double>? progress = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Convert a single file to PDF. Supports images (.png/.jpg/.jpeg/.bmp/.tiff),
+    /// Word (.doc/.docx), Excel (.xls/.xlsx), PowerPoint (.ppt/.pptx), and plain text (.txt).
+    /// </summary>
+    Task<OperationResult> ConvertToPdfAsync(
+        string inputPath,
+        string outputPath,
+        CancellationToken ct = default);
+
+    /// <summary>Combine multiple image files into one multi-page PDF.</summary>
+    Task<OperationResult> ConvertImagesToPdfAsync(
+        IReadOnlyList<string> imagePaths,
+        string outputPath,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default);
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }

@@ -163,6 +163,17 @@ public sealed class FileDialogService : IFileDialogService
             dialog.Degrees);
     }
 
+    public IReadOnlyList<string> OpenForConversion()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt)|*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt|All files (*.*)|*.*",
+            Title = "Convert to PDF — Select File(s)",
+            Multiselect = true,
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileNames : Array.Empty<string>();
+    }
+
     public void PrintFile(string filePath)
     {
         try
