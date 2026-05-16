@@ -227,9 +227,7 @@ public sealed class PdfExporter : IPdfExporter
 
     /// <summary>
     /// Renders a single PDF page as semantic HTML using word-level extraction.
-    /// Word positions are always in correct visual order, avoiding scrambled-letter
-    /// artifacts that letter-level extraction can produce for some font encodings.
-    /// Tables and embedded images are detected and emitted as proper HTML elements.
+    /// Produces paragraphs, headings, bullet/numbered lists, tables, and images.
     /// </summary>
     private static void HtmlRenderWordBasedPage(
         StringBuilder sb,
@@ -246,10 +244,10 @@ public sealed class PdfExporter : IPdfExporter
         var tableSpans  = DetectTableSpans(rows, colGap: 30.0, minRows: 2);
         var tableRowSet = new HashSet<int>(tableSpans.SelectMany(s => s));
 
-        // 3. Compute the median word-height (body font-size proxy) for heading detection.
+        // 3. Median word-height as body font-size proxy for heading detection.
         double medianH = ComputeWordRowsMedianSize(rows);
 
-        // 4. Collect embedded images from the page.
+        // 4. Collect embedded images.
         var imgItems = new List<(double SortY, ImageBlock Block)>();
         if (page.NumberOfImages > 0)
         {
@@ -268,58 +266,103 @@ public sealed class PdfExporter : IPdfExporter
         // 5. Build an ordered work list: (sortY-top-down, render action).
         var items = new List<(double SortY, Action Render)>();
 
-        // Text rows — accumulate consecutive paragraph rows into one <p>.
-        var paraBuf     = new List<string>();
-        double prevCY   = double.NaN;
-        double prevH    = medianH > 0 ? medianH : 12;
+        // Paragraph accumulator: stores pre-styled HTML fragments.
+        var paraBuf      = new List<string>();
+        double paraSortY = double.NaN; // sort Y of the FIRST row in the current paragraph
+        double prevBodyCY = double.NaN; // CenterY of last body-text row
+        // Body-only height — intentionally NOT updated for headings, so the gap threshold
+        // remains relative to body line spacing and is not poisoned by a large heading.
+        double prevBodyH = medianH > 0 ? medianH : 12;
+
+        // List accumulator
+        var    listBuf   = new List<string>();
+        bool   isBulList = false;
+        double listSortY = double.NaN;
 
         void FlushPara()
         {
             if (paraBuf.Count == 0) return;
-            string joined = HtmlEnc(string.Join(" ", paraBuf));
-            double sy     = page.Height - prevCY;
+            string joined = string.Join(" ", paraBuf);
+            double sy = paraSortY;
             items.Add((sy, () => sb.AppendLine($"<p>{joined}</p>")));
             paraBuf.Clear();
+            paraSortY = double.NaN;
+        }
+
+        void FlushList()
+        {
+            if (listBuf.Count == 0) return;
+            string listTag = isBulList ? "ul" : "ol";
+            var    captured = listBuf.ToList();
+            double sy       = listSortY;
+            items.Add((sy, () =>
+            {
+                sb.AppendLine($"<{listTag}>");
+                foreach (var li in captured) sb.AppendLine($"<li>{li}</li>");
+                sb.AppendLine($"</{listTag}>");
+            }));
+            listBuf.Clear();
+            listSortY = double.NaN;
         }
 
         for (int ri = 0; ri < rows.Count; ri++)
         {
-            if (tableRowSet.Contains(ri)) { FlushPara(); continue; }
+            if (tableRowSet.Contains(ri)) { FlushPara(); FlushList(); continue; }
 
             var sortedW = rows[ri].Words.OrderBy(w => w.BoundingBox.Left).ToList();
-            string text = string.Join(" ", sortedW.Select(w => w.Text));
-            if (string.IsNullOrWhiteSpace(text)) continue;
+            if (sortedW.Count == 0) continue;
+            string plainText = string.Join(" ", sortedW.Select(w => w.Text));
+            if (string.IsNullOrWhiteSpace(plainText)) continue;
 
-            double rowH = GetWordsAverageFontSize(sortedW, prevH);
-            string? headingTag = null;
-            if (medianH > 0 && rowH > medianH * 1.4 && rowH > 8)
-            {
-                headingTag = rowH > medianH * 2.0 ? "h1"
-                           : rowH > medianH * 1.6 ? "h2" : "h3";
-            }
+            double rowH  = GetWordsAverageFontSize(sortedW, prevBodyH);
+            double cy    = rows[ri].CenterY;
+            double sortY = page.Height - cy;
 
-            double cy = rows[ri].CenterY;
+            // Heading detection (size threshold relative to body median)
+            string? headingTag = (medianH > 0 && rowH > medianH * 1.4 && rowH > 8)
+                ? (rowH > medianH * 2.0 ? "h1" : rowH > medianH * 1.6 ? "h2" : "h3")
+                : null;
 
             if (headingTag != null)
             {
                 FlushPara();
-                string tag = headingTag, enc = HtmlEnc(text);
-                double sy = page.Height - cy;
-                items.Add((sy, () => sb.AppendLine($"<{tag}>{enc}</{tag}>")));
+                FlushList();
+                string tag  = headingTag;
+                string html = BuildStyledRowHtml(sortedW);
+                items.Add((sortY, () => sb.AppendLine($"<{tag}>{html}</{tag}>")));
+                // Reset paragraph context — large heading size must NOT set prevBodyH
+                prevBodyCY = double.NaN;
             }
             else
             {
-                // Paragraph boundary: large Y gap → start a new <p>
-                bool newPara = !double.IsNaN(prevCY) &&
-                               Math.Abs(prevCY - cy) > prevH * 1.4 * 2.0;
-                if (newPara) FlushPara();
-                paraBuf.Add(text);
-                prevCY = cy;
-            }
+                bool thisBullet   = WordRowIsBullet(plainText);
+                bool thisNumbered = !thisBullet && IsNumberedListPrefix(plainText, out _);
 
-            prevH = rowH;
+                if (thisBullet || thisNumbered)
+                {
+                    FlushPara();
+                    if (listBuf.Count > 0 && isBulList != thisBullet) FlushList();
+                    if (listBuf.Count == 0) { isBulList = thisBullet; listSortY = sortY; }
+                    listBuf.Add(BuildStyledRowHtml(sortedW, stripListPrefix: true));
+                }
+                else
+                {
+                    FlushList();
+
+                    // New paragraph when Y gap > 1.8 × body line height
+                    bool newPara = !double.IsNaN(prevBodyCY) &&
+                                   Math.Abs(prevBodyCY - cy) > prevBodyH * 1.8;
+                    if (newPara) FlushPara();
+
+                    if (double.IsNaN(paraSortY)) paraSortY = sortY; // lock in FIRST row Y
+                    paraBuf.Add(BuildStyledRowHtml(sortedW));
+                    prevBodyCY = cy;
+                    prevBodyH  = rowH; // update only for body-text rows
+                }
+            }
         }
         FlushPara();
+        FlushList();
 
         // Table spans
         foreach (var span in tableSpans)
@@ -525,10 +568,10 @@ public sealed class PdfExporter : IPdfExporter
             .ToList();
         if (rowGroups.Count == 0) return;
 
-        double medianSize = ComputeWordRowsMedianSize(rowGroups);
-        var    paraBuf    = new List<string>();
-        double prevCenterY = double.NaN;
-        double prevSize    = medianSize > 0 ? medianSize : 12;
+        double medianSize  = ComputeWordRowsMedianSize(rowGroups);
+        var    paraBuf     = new List<string>();
+        double prevBodyCY  = double.NaN;
+        double prevBodyH   = medianSize > 0 ? medianSize : 12; // body-only, not contaminated by headings
 
         void FlushPara()
         {
@@ -543,32 +586,27 @@ public sealed class PdfExporter : IPdfExporter
             string text   = string.Join(" ", sortedRow.Select(w => w.Text));
             if (string.IsNullOrWhiteSpace(text)) continue;
 
-            double rowSize = GetWordsAverageFontSize(sortedRow, prevSize);
+            double rowSize = GetWordsAverageFontSize(sortedRow, prevBodyH);
 
-            string? headingTag = null;
-            if (medianSize > 0 && rowSize > medianSize * 1.4 && rowSize > 8)
-            {
-                headingTag = rowSize > medianSize * 2.0 ? "h1"
-                           : rowSize > medianSize * 1.6 ? "h2" : "h3";
-            }
-
-            // Large Y gap between rows → paragraph break
-            bool newPara = !double.IsNaN(prevCenterY) &&
-                           Math.Abs(prevCenterY - centerY) > prevSize * 1.4 * 2.0;
-            if (newPara) FlushPara();
+            string? headingTag = (medianSize > 0 && rowSize > medianSize * 1.4 && rowSize > 8)
+                ? (rowSize > medianSize * 2.0 ? "h1" : rowSize > medianSize * 1.6 ? "h2" : "h3")
+                : null;
 
             if (headingTag != null)
             {
                 FlushPara();
                 sb.AppendLine($"<{headingTag}>{HtmlEnc(text)}</{headingTag}>");
+                prevBodyCY = double.NaN; // don't let heading gap poison next paragraph check
             }
             else
             {
+                bool newPara = !double.IsNaN(prevBodyCY) &&
+                               Math.Abs(prevBodyCY - centerY) > prevBodyH * 1.8;
+                if (newPara) FlushPara();
                 paraBuf.Add(text);
+                prevBodyCY = centerY;
+                prevBodyH  = rowSize;
             }
-
-            prevCenterY = centerY;
-            prevSize    = rowSize;
         }
         FlushPara();
     }
@@ -581,12 +619,72 @@ public sealed class PdfExporter : IPdfExporter
                          .Where(s => s >= 4)
                          .ToList();
         if (sizes.Count > 0) return sizes.Average();
-        // Letter font data unavailable — estimate from word bounding-box height
         var heights = words.Where(w => w.BoundingBox.Height >= 2)
                            .Select(w => w.BoundingBox.Height)
                            .ToList();
         return heights.Count > 0 ? heights.Average() : fallback;
     }
+
+    /// <summary>
+    /// Builds an HTML fragment for a row of words, applying bold/italic inline styling.
+    /// When stripListPrefix is true, the bullet char or numbered prefix is removed.
+    /// </summary>
+    private static string BuildStyledRowHtml(
+        List<UglyToad.PdfPig.Content.Word> sortedWords, bool stripListPrefix = false)
+    {
+        var  result      = new StringBuilder();
+        bool firstOutput = true;
+        bool prefixDone  = false;
+
+        for (int i = 0; i < sortedWords.Count; i++)
+        {
+            string text = sortedWords[i].Text;
+            if (string.IsNullOrEmpty(text)) continue;
+
+            // Strip list prefix from the first non-empty word
+            if (stripListPrefix && !prefixDone)
+            {
+                prefixDone = true;
+                if (text.Length == 1 && (BulletChars.Contains(text[0]) ||
+                                         text[0] == '-' || text[0] == '*'))
+                    continue; // standalone bullet/dash word — skip
+                if (!string.IsNullOrEmpty(text) && BulletChars.Contains(text[0]))
+                    text = text[1..].TrimStart();
+                else if (text.Length >= 2 && (text[0] == '-' || text[0] == '*') && text[1] == ' ')
+                    text = text[2..];
+                else if (IsNumberedListPrefix(text, out int pLen))
+                    text = pLen < text.Length ? text[pLen..] : "";
+                if (string.IsNullOrEmpty(text)) continue;
+            }
+
+            bool bold   = IsWordBold(sortedWords[i]);
+            bool italic = IsWordItalic(sortedWords[i]);
+            string enc  = HtmlEnc(text);
+
+            if (!firstOutput) result.Append(' ');
+            firstOutput = false;
+
+            if      (bold && italic) result.Append($"<strong><em>{enc}</em></strong>");
+            else if (bold)           result.Append($"<strong>{enc}</strong>");
+            else if (italic)         result.Append($"<em>{enc}</em>");
+            else                     result.Append(enc);
+        }
+        return result.ToString();
+    }
+
+    private static bool WordRowIsBullet(string plainText)
+    {
+        if (string.IsNullOrEmpty(plainText)) return false;
+        char first = plainText[0];
+        return BulletChars.Contains(first) ||
+               ((first == '-' || first == '*') && plainText.Length >= 2 && plainText[1] == ' ');
+    }
+
+    private static bool IsWordBold(UglyToad.PdfPig.Content.Word word) =>
+        word.Letters.Any(l => IsBoldFont(l.FontName ?? ""));
+
+    private static bool IsWordItalic(UglyToad.PdfPig.Content.Word word) =>
+        word.Letters.Any(l => IsItalicFont(l.FontName ?? ""));
 
     private static double ComputeWordRowsMedianSize(
         IReadOnlyList<(double CenterY, List<UglyToad.PdfPig.Content.Word> Words)> rowGroups)

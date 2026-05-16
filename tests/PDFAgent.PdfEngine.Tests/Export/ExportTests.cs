@@ -415,6 +415,59 @@ public sealed class ExportTests : IDisposable
         pageCount.Should().Be(2, "source PDF has 2 pages — each must produce a .page div");
     }
 
+    [Fact]
+    public async Task ExportHtml_TwoDistinctBlocks_ProducesSeparateParagraphs()
+    {
+        var pdf = Path.Combine(_dir, "two_block.pdf");
+        CreateTwoBlockPdf(pdf);
+
+        var dest = Path.Combine(_dir, "quality_two_paras.html");
+        var r    = await _exporter.ExportAsync(pdf, dest, ExportFormat.Html,
+            new ExportOptions { AllPages = true, Dpi = 72 });
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+
+        // Two text blocks separated by a large vertical gap must become two <p> elements
+        var paragraphs = System.Text.RegularExpressions.Regex.Matches(
+            html, @"<p[^>]*>[\s\S]*?</p>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        paragraphs.Count.Should().BeGreaterThanOrEqualTo(2,
+            "two text blocks with a large gap must produce at least two separate <p> elements");
+    }
+
+    [Fact]
+    public async Task ExportHtml_BoldText_ProducesStrongElement()
+    {
+        var pdf  = Path.Combine(_dir, "bold_test.pdf");
+        CreateBoldTextPdf(pdf);
+
+        var dest = Path.Combine(_dir, "quality_bold.html");
+        var r    = await _exporter.ExportAsync(pdf, dest, ExportFormat.Html,
+            new ExportOptions { AllPages = true, Dpi = 72 });
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+        html.Should().Contain("<strong>", "bold font text must produce <strong> elements");
+    }
+
+    [Fact]
+    public async Task ExportHtml_BulletList_ProducesUlLiElements()
+    {
+        var pdf  = Path.Combine(_dir, "bullet_test.pdf");
+        CreateBulletListPdf(pdf);
+
+        var dest = Path.Combine(_dir, "quality_bullet.html");
+        var r    = await _exporter.ExportAsync(pdf, dest, ExportFormat.Html,
+            new ExportOptions { AllPages = true, Dpi = 72 });
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+        html.Should().Contain("<ul>",  "bullet items must be wrapped in a <ul> element");
+        html.Should().Contain("<li>",  "each bullet item must be a <li> element");
+        html.Should().Contain("</ul>", "<ul> must be properly closed");
+    }
+
     // ── DOCX quality — DocxBuilder tested directly, independent of Word COM ────
 
     [Fact]
@@ -580,14 +633,51 @@ public sealed class ExportTests : IDisposable
         using var doc  = new PdfDocument();
         var page = doc.AddPage();
         using var gfx  = PdfSharp.Drawing.XGraphics.FromPdfPage(page);
-        // Heading: large font at the top
         var headFont = new PdfSharp.Drawing.XFont("Arial", headingSize, PdfSharp.Drawing.XFontStyleEx.Bold);
         gfx.DrawString(headingText, headFont, PdfSharp.Drawing.XBrushes.Black,
             new PdfSharp.Drawing.XPoint(40, 60));
-        // Body: smaller font below
         var bodyFont = new PdfSharp.Drawing.XFont("Arial", bodySize);
         gfx.DrawString(bodyText, bodyFont, PdfSharp.Drawing.XBrushes.Black,
             new PdfSharp.Drawing.XPoint(40, 120));
+        doc.Save(path);
+    }
+
+    private static void CreateTwoBlockPdf(string path)
+    {
+        using var doc = new PdfDocument();
+        var page = doc.AddPage();
+        using var gfx  = PdfSharp.Drawing.XGraphics.FromPdfPage(page);
+        var font = new PdfSharp.Drawing.XFont("Arial", 12);
+        // Two blocks separated by ~140pt vertical gap (well above 1.8 × 12pt = 21.6pt threshold)
+        gfx.DrawString("First paragraph text.", font, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 60));
+        gfx.DrawString("Second paragraph text.", font, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 200));
+        doc.Save(path);
+    }
+
+    private static void CreateBoldTextPdf(string path)
+    {
+        using var doc = new PdfDocument();
+        var page = doc.AddPage();
+        using var gfx  = PdfSharp.Drawing.XGraphics.FromPdfPage(page);
+        var font = new PdfSharp.Drawing.XFont("Arial", 12, PdfSharp.Drawing.XFontStyleEx.Bold);
+        gfx.DrawString("BoldWord regular text", font, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 60));
+        doc.Save(path);
+    }
+
+    private static void CreateBulletListPdf(string path)
+    {
+        using var doc = new PdfDocument();
+        var page = doc.AddPage();
+        using var gfx  = PdfSharp.Drawing.XGraphics.FromPdfPage(page);
+        var font = new PdfSharp.Drawing.XFont("Arial", 12);
+        // Use hyphen-space bullets (ASCII, always readable by PdfPig)
+        gfx.DrawString("- First item", font, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 60));
+        gfx.DrawString("- Second item", font, PdfSharp.Drawing.XBrushes.Black,
+            new PdfSharp.Drawing.XPoint(40, 85));
         doc.Save(path);
     }
 }
