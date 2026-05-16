@@ -24,7 +24,8 @@ public sealed record TextLine(
     IReadOnlyList<TextRun> Runs,
     double MaxSizePt,
     LineType Type        = LineType.Paragraph,
-    int      IndentLevel = 0);
+    int      IndentLevel = 0,
+    double   BaselineY   = 0);   // PDF bottom-up Y of the baseline; used for paragraph gap detection
 
 /// <summary>One row of a detected table — each element is one cell's styled runs.</summary>
 public sealed record TableRow(IReadOnlyList<IReadOnlyList<TextRun>> Cells);
