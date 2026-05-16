@@ -29,6 +29,7 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
     private bool _isDocumentLoaded;
 
     // ── Search state ──────────────────────────────────────────────────────────

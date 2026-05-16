@@ -1,5 +1,7 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
+using Microsoft.Web.WebView2.Core;
 using PDFAgent.App.ViewModels;
 using PDFAgent.Core.Models;
 
@@ -10,6 +12,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel          _mainViewModel;
     private readonly BatchWorkflowViewModel _batchVm;
     private readonly OcrReviewViewModel     _ocrVm;
+    private string? _currentPdfPath;
 
     public MainWindow(
         MainViewModel mainViewModel,
@@ -33,28 +36,37 @@ public partial class MainWindow : Window
             SearchQueryTextBox.SelectAll();
         };
 
-        // After any in-place PDF modification (sign, rotate, redact…), reload the viewer
-        // so WebView2 shows the updated file rather than the cached previous version.
-        mainViewModel.ViewerRefreshRequested += () => PdfWebView.Reload();
+        // After any in-place edit (sign, rotate, redact…) re-copy and reload so the
+        // viewer shows the updated bytes — the cached temp copy would be stale otherwise.
+        mainViewModel.ViewerRefreshRequested += () =>
+            Dispatcher.Invoke(() => NavigateToPdf(_currentPdfPath));
 
         mainViewModel.PropertyChanged += async (_, pe) =>
         {
             switch (pe.PropertyName)
             {
-                // New file opened → navigate WebView2 to the real PDF.
                 case nameof(MainViewModel.OpenedFilePath):
                     NavigateToPdf(mainViewModel.OpenedFilePath);
                     break;
 
-                // Zoom slider/buttons → WebView2 zoom factor.
                 case nameof(MainViewModel.CurrentZoom):
                     if (PdfWebView.CoreWebView2 != null)
                         PdfWebView.ZoomFactor = mainViewModel.CurrentZoom;
                     break;
 
-                // Search/page-navigation buttons → scroll PDF viewer to the right page.
                 case nameof(MainViewModel.CurrentPage):
                     await NavigateToPageAsync(mainViewModel.CurrentPage);
+                    break;
+
+                case nameof(MainViewModel.SearchHitCount):
+                    var q = mainViewModel.SearchQuery?.Trim();
+                    if (mainViewModel.SearchHitCount > 0 && !string.IsNullOrEmpty(q))
+                        await TriggerPdfJsFindAsync(q);
+                    break;
+
+                case nameof(MainViewModel.IsSearchVisible):
+                    if (!mainViewModel.IsSearchVisible)
+                        await ClearPdfJsHighlightsAsync();
                     break;
             }
         };
@@ -66,17 +78,42 @@ public partial class MainWindow : Window
     {
         await PdfWebView.EnsureCoreWebView2Async(null);
 
-        PdfWebView.CoreWebView2.Settings.IsStatusBarEnabled              = false;
-        // Keep browser accelerator keys enabled so Ctrl+F / Ctrl+P work inside the PDF viewer.
+        // Serve the entire app output folder via HTTPS so PDF.js and the temp PDF
+        // are both on the same origin (https://pdfapp) — no CORS, no fetch restrictions.
+        PdfWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+            "pdfapp",
+            AppContext.BaseDirectory,
+            CoreWebView2HostResourceAccessKind.Allow);
+
+        PdfWebView.CoreWebView2.Settings.IsStatusBarEnabled               = false;
         PdfWebView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = true;
-        PdfWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled   = true;
+        PdfWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled    = true;
+
+        PdfWebView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
 
         await _mainViewModel.InitializeAsync();
+    }
+
+    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess) return;
+        // Hide PDF.js toolbar so the viewer fills the whole WebView2 area.
+        await PdfWebView.CoreWebView2.ExecuteScriptAsync("""
+            (function() {
+                var s = document.getElementById('__pdfagent_style');
+                if (!s) { s = document.createElement('style'); s.id='__pdfagent_style'; document.head.appendChild(s); }
+                s.textContent =
+                    '#toolbarViewer,#secondaryToolbar{display:none!important}' +
+                    '#viewerContainer{top:0!important}';
+            })();
+            """);
     }
 
     private void NavigateToPdf(string? filePath)
     {
         if (PdfWebView.CoreWebView2 == null) return;
+
+        _currentPdfPath = filePath;
 
         if (string.IsNullOrEmpty(filePath))
         {
@@ -84,19 +121,30 @@ public partial class MainWindow : Window
             return;
         }
 
-        var uri = new Uri(filePath).AbsoluteUri;
-        PdfWebView.CoreWebView2.Navigate(uri);
+        // Copy the PDF into pdftemp/ under the app's base directory.
+        // Because pdfapp maps to AppContext.BaseDirectory, the copied file is served at
+        // https://pdfapp/pdftemp/{name} — same origin as the PDF.js viewer, so no CORS.
+        var tempDir = Path.Combine(AppContext.BaseDirectory, "pdftemp");
+        Directory.CreateDirectory(tempDir);
+        var fileName = Path.GetFileName(filePath);
+        var destPath = Path.Combine(tempDir, fileName);
+
+        try { File.Copy(filePath, destPath, overwrite: true); }
+        catch { /* best-effort; viewer will show its own error if the fetch fails */ }
+
+        var encodedName = Uri.EscapeDataString(fileName);
+        // Append a timestamp fragment so repeated navigations (after edits) bypass the cache.
+        var ts         = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var viewerUrl  = $"https://pdfapp/pdfjs/web/viewer.html?file=https://pdfapp/pdftemp/{encodedName}&ts={ts}";
+        PdfWebView.CoreWebView2.Navigate(viewerUrl);
         PdfWebView.ZoomFactor = _mainViewModel.CurrentZoom;
     }
 
     private async Task NavigateToPageAsync(int page)
     {
         if (PdfWebView.CoreWebView2 == null || !_mainViewModel.IsDocumentLoaded) return;
-        // Change the URL fragment — Chromium treats a same-resource fragment change as a
-        // same-document navigation (no reload).  Chrome's PDF viewer listens to hashchange
-        // and scrolls to the requested page.
         await PdfWebView.CoreWebView2.ExecuteScriptAsync(
-            $"window.location.hash = 'page={page}'");
+            $"if(window.PDFViewerApplication) PDFViewerApplication.page = {page};");
     }
 
     // ── Search bar focus ──────────────────────────────────────────────────────
@@ -106,16 +154,54 @@ public partial class MainWindow : Window
         SearchQueryTextBox.Focus();
     }
 
-    // ── Sign: show signature dialog, then placement dialog, then burn ─────────
+    // ── PDF.js word-level highlights ──────────────────────────────────────────
+
+    private async Task TriggerPdfJsFindAsync(string query)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(query);
+
+        await PdfWebView.CoreWebView2.ExecuteScriptAsync($$"""
+            (async () => {
+                for (let i = 0; i < 50; i++) {
+                    if (window.PDFViewerApplication && PDFViewerApplication.eventBus) break;
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                if (!window.PDFViewerApplication) return;
+                await PDFViewerApplication.initializedPromise;
+                PDFViewerApplication.eventBus.dispatch('find', {
+                    source:        window,
+                    type:          '',
+                    query:         {{json}},
+                    caseSensitive: false,
+                    entireWord:    false,
+                    highlightAll:  true,
+                    findPrevious:  false
+                });
+            })();
+            """);
+    }
+
+    private async Task ClearPdfJsHighlightsAsync()
+    {
+        if (PdfWebView.CoreWebView2 == null) return;
+        await PdfWebView.CoreWebView2.ExecuteScriptAsync("""
+            if (window.PDFViewerApplication && PDFViewerApplication.eventBus)
+                PDFViewerApplication.eventBus.dispatch('find', {
+                    source: window, type: '', query: '',
+                    caseSensitive: false, entireWord: false,
+                    highlightAll: false, findPrevious: false
+                });
+            """);
+    }
+
+    // ── Sign ──────────────────────────────────────────────────────────────────
 
     private async Task OpenSignatureDialogAsync()
     {
-        // Step 1 — get the signature image.
         var sigVm  = new SignatureDialogViewModel();
         var sigDlg = new SignatureDialog { DataContext = sigVm, Owner = this };
         if (sigDlg.ShowDialog() != true || sigVm.SignatureBytes == null) return;
 
-        // Step 2 — let the user choose page + position.
         var placeDlg = new SignaturePlacementDialog(
             _mainViewModel.TotalPages,
             _mainViewModel.CurrentPage)
@@ -124,9 +210,6 @@ public partial class MainWindow : Window
         };
         if (placeDlg.ShowDialog() != true) return;
 
-        // Step 3 — burn signature directly into the PDF (no overlay sticker needed).
-        // ApplySignatureAsync handles the file write, engine reopen, and fires
-        // ViewerRefreshRequested so WebView2 reloads the updated document.
         await _mainViewModel.PlaceSignatureAsync(
             sigVm.SignatureBytes,
             placeDlg.ChosenPage,

@@ -18,6 +18,20 @@ public interface IPdfEditor
     Task<OperationResult> BakeTextAnnotationsAsync(string filePath, string outputPath, IReadOnlyList<TextAnnotationRecord> annotations, CancellationToken ct = default);
     Task<OperationResult> BakeTextEditsAsync(string filePath, string outputPath, IReadOnlyList<TextEditRecord> edits, CancellationToken ct = default);
     Task<OperationResult> AddBlankPageAsync(string filePath, string outputPath, int insertAtIndex, double widthPts, double heightPts, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reduce the file size of a PDF.
+    /// Pass <paramref name="imageDpi"/> = null for lossless stream re-compression (text preserved).
+    /// Pass a DPI value to re-render every page as a JPEG image at that resolution.
+    /// <paramref name="jpegQuality"/> (1–100) is ignored in lossless mode.
+    /// </summary>
+    Task<OperationResult> CompressAsync(
+        string inputPath,
+        string outputPath,
+        int? imageDpi,
+        int jpegQuality,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default);
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }
@@ -26,14 +40,9 @@ public enum SplitMode { SplitAll, SplitRange, SplitEvery }
 public sealed record SplitOptions
 {
     public SplitMode Mode { get; init; } = SplitMode.SplitAll;
-    /// <summary>Output folder — used by SplitAll and SplitEvery.</summary>
     public string OutputDir { get; init; } = string.Empty;
-    /// <summary>Output file path — used by SplitRange (extract to one PDF).</summary>
     public string OutputFile { get; init; } = string.Empty;
-    /// <summary>0-based page indices to extract — used by SplitRange.</summary>
     public IReadOnlyList<int> PageIndices { get; init; } = Array.Empty<int>();
-    /// <summary>Group size — used by SplitEvery.</summary>
     public int EveryN { get; init; } = 2;
-    /// <summary>Base name for output files (without extension).</summary>
     public string BaseName { get; init; } = "page";
 }

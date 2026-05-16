@@ -1,0 +1,161 @@
+<Window x:Class="PDFAgent.App.Views.ReduceSizeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reduce PDF Size"
+        Width="440" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        FontFamily="{DynamicResource BodyFont}"
+        TextOptions.TextFormattingMode="Ideal"
+        UseLayoutRounding="True">
+
+    <StackPanel Margin="24,20">
+
+        <!-- Header -->
+        <TextBlock Text="Reduce PDF Size"
+                   FontFamily="{DynamicResource HeadingFont}"
+                   FontSize="18" FontWeight="SemiBold"
+                   Foreground="{DynamicResource OnSurfaceBrush}"
+                   Margin="0,0,0,4" />
+        <TextBlock x:Name="FileSizeLabel"
+                   FontSize="12"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,20" />
+
+        <!-- Mode -->
+        <TextBlock Text="MODE"
+                   FontSize="11" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,10" />
+
+        <RadioButton x:Name="RadioLossless"
+                     Content="Lossless — compress streams only (text preserved, results vary)"
+                     GroupName="Mode"
+                     IsChecked="True"
+                     Foreground="{DynamicResource OnSurfaceBrush}"
+                     FontSize="13"
+                     Checked="Mode_Changed"
+                     Margin="0,0,0,6" />
+
+        <RadioButton x:Name="RadioImage"
+                     Content="Image — re-render pages as JPEG (choose DPI and quality below)"
+                     GroupName="Mode"
+                     Foreground="{DynamicResource OnSurfaceBrush}"
+                     FontSize="13"
+                     Checked="Mode_Changed"
+                     Margin="0,0,0,16" />
+
+        <!-- Image options (enabled only in Image mode) -->
+        <StackPanel x:Name="ImageOptions" IsEnabled="False" Opacity="0.4">
+
+            <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,0,0,16" />
+
+            <!-- DPI -->
+            <TextBlock Text="RESOLUTION (DPI)"
+                       FontSize="11" FontWeight="Bold"
+                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                       Margin="0,0,0,8" />
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="60" />
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="DpiSlider"
+                        Grid.Column="0"
+                        Minimum="36" Maximum="300"
+                        Value="150"
+                        TickFrequency="1"
+                        IsSnapToTickEnabled="True"
+                        ValueChanged="DpiSlider_ValueChanged"
+                        Margin="0,0,12,0" />
+                <TextBlock x:Name="DpiLabel"
+                           Grid.Column="1"
+                           Text="150 DPI"
+                           FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource OnSurfaceBrush}"
+                           VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="60" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="36" FontSize="11"
+                           Foreground="{DynamicResource OutlineBrush}" />
+                <TextBlock Grid.Column="1" Text="300" FontSize="11"
+                           Foreground="{DynamicResource OutlineBrush}"
+                           HorizontalAlignment="Right" Margin="0,0,60,0" />
+            </Grid>
+
+            <TextBlock x:Name="DpiHint" FontSize="11"
+                       Foreground="{DynamicResource OutlineBrush}"
+                       Margin="0,0,0,20" />
+
+            <!-- JPEG Quality -->
+            <TextBlock Text="JPEG QUALITY"
+                       FontSize="11" FontWeight="Bold"
+                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                       Margin="0,0,0,8" />
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="60" />
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="QualitySlider"
+                        Grid.Column="0"
+                        Minimum="1" Maximum="100"
+                        Value="80"
+                        TickFrequency="1"
+                        IsSnapToTickEnabled="True"
+                        ValueChanged="QualitySlider_ValueChanged"
+                        Margin="0,0,12,0" />
+                <TextBlock x:Name="QualityLabel"
+                           Grid.Column="1"
+                           Text="80%"
+                           FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource OnSurfaceBrush}"
+                           VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="60" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="1 (smallest)" FontSize="11"
+                           Foreground="{DynamicResource OutlineBrush}" />
+                <TextBlock Grid.Column="1" Text="100 (best)" FontSize="11"
+                           Foreground="{DynamicResource OutlineBrush}"
+                           HorizontalAlignment="Right" Margin="0,0,60,0" />
+            </Grid>
+
+            <TextBlock x:Name="QualityHint" FontSize="11"
+                       Foreground="{DynamicResource OutlineBrush}"
+                       Margin="0,0,0,4" />
+
+        </StackPanel>
+
+        <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,16,0,12" />
+
+        <!-- Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel"
+                    Style="{StaticResource OutlinedButton}"
+                    Width="96"
+                    Margin="0,0,8,0"
+                    IsCancel="True"
+                    Click="Cancel_Click" />
+            <Button Content="Compress…"
+                    Style="{StaticResource FilledButton}"
+                    Width="110"
+                    IsDefault="True"
+                    Click="Compress_Click" />
+        </StackPanel>
+
+    </StackPanel>
+</Window>

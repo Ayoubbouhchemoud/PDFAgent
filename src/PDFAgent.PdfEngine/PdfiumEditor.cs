@@ -649,6 +649,115 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    public async Task<OperationResult> CompressAsync(
+        string inputPath,
+        string outputPath,
+        int? imageDpi,
+        int jpegQuality,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            // All XImage streams must outlive output.Save() — PdfSharp holds internal stream refs.
+            var keepAlive = new List<MemoryStream>();
+            try
+            {
+                if (imageDpi == null)
+                {
+                    // Lossless: re-save through PdfSharp with FlateDecode on every content stream.
+                    // Preserves text, fonts, and vector graphics. Best for uncompressed source PDFs.
+                    using var input  = PdfReader.Open(inputPath, PdfDocumentOpenMode.Import);
+                    using var output = new PdfDocument();
+                    output.Options.CompressContentStreams = true;
+
+                    for (var i = 0; i < input.PageCount; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        output.AddPage(input.Pages[i]);
+                        progress?.Report((i + 1.0) / input.PageCount * 0.95);
+                    }
+                    output.Save(outputPath);
+                }
+                else
+                {
+                    // Image-based: render each page as a JPEG at the requested DPI and quality.
+                    // The text layer is replaced by raster pixels.
+                    var dpi     = Math.Clamp(imageDpi.Value, 36, 600);
+                    var quality = (long)Math.Clamp(jpegQuality, 1, 100);
+
+                    var jpegCodec = System.Drawing.Imaging.ImageCodecInfo
+                        .GetImageDecoders()
+                        .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+                    var encParams = new System.Drawing.Imaging.EncoderParameters(1);
+                    encParams.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+                        System.Drawing.Imaging.Encoder.Quality, quality);
+
+                    using var pdfIn  = PdfiumViewer.PdfDocument.Load(inputPath);
+                    using var output = new PdfDocument();
+
+                    for (var i = 0; i < pdfIn.PageCount; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+
+                        var sz    = pdfIn.PageSizes[i];
+                        var scale = dpi / 72.0;
+                        var w     = Math.Max(1, (int)(sz.Width  * scale));
+                        var h     = Math.Max(1, (int)(sz.Height * scale));
+
+                        using var bmp = (System.Drawing.Bitmap)pdfIn.Render(
+                            i, w, h, (float)dpi, (float)dpi, false);
+
+                        var ms = new MemoryStream();
+                        bmp.Save(ms, jpegCodec, encParams);
+                        ms.Position = 0;
+                        keepAlive.Add(ms); // must stay alive until output.Save
+
+                        var page    = output.AddPage();
+                        page.Width  = XUnit.FromPoint(sz.Width);
+                        page.Height = XUnit.FromPoint(sz.Height);
+
+                        var xImg = XImage.FromStream(ms);
+                        using var gfx = XGraphics.FromPdfPage(page);
+                        gfx.DrawImage(xImg, 0, 0, page.Width.Point, page.Height.Point);
+
+                        progress?.Report((i + 1.0) / pdfIn.PageCount * 0.95);
+                    }
+                    output.Save(outputPath);
+                }
+
+                progress?.Report(1.0);
+
+                var origSize = new FileInfo(inputPath).Length;
+                var newSize  = new FileInfo(outputPath).Length;
+                var savedPct = origSize > 0 ? (1.0 - (double)newSize / origSize) * 100.0 : 0;
+                _logger.LogInformation(
+                    "Compress dpi={Dpi} q={Q}: {Orig}→{New} bytes (−{Pct:N1}%)",
+                    imageDpi?.ToString() ?? "lossless", jpegQuality, origSize, newSize, savedPct);
+
+                return OperationResult.Ok(
+                    $"{FormatBytes(origSize)} → {FormatBytes(newSize)} (−{savedPct:N1}%)");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CompressPdf failed");
+                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
+                return OperationResult.Fail($"Compression failed: {ex.Message}");
+            }
+            finally
+            {
+                foreach (var s in keepAlive) try { s.Dispose(); } catch { }
+            }
+        }, ct);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:N1} MB";
+        if (bytes >= 1_024)     return $"{bytes / 1_024.0:N0} KB";
+        return $"{bytes} B";
+    }
+
     public async Task<OperationResult> AddBlankPageAsync(
         string filePath, string outputPath,
         int insertAtIndex, double widthPts, double heightPts,

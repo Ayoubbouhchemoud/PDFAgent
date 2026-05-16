@@ -54,6 +54,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ToggleTextEditModeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplyTextEditsCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -665,6 +666,61 @@ public sealed partial class MainViewModel : ObservableObject
                 : $"Redaction failed: {result.Message}";
         }
         finally { IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ReduceSizeAsync()
+    {
+        var dlg = new Views.ReduceSizeDialog(DocumentInfo!.FileSizeBytes)
+        {
+            Owner = System.Windows.Application.Current.MainWindow,
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        var imageDpi  = dlg.SelectedImageDpi;
+        var quality   = dlg.SelectedJpegQuality;
+        var baseName  = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
+        var suffix    = imageDpi == null ? "_compressed" : $"_{imageDpi}dpi_q{quality}";
+        var output    = _fileDialog.SavePdf($"{baseName}{suffix}.pdf");
+        if (output == null) return;
+
+        IsBusy = true;
+        var origSize = DocumentInfo.FileSizeBytes;
+        StatusText = "Compressing PDF…";
+        try
+        {
+            var progress = new Progress<double>(p =>
+                StatusText = $"Compressing… {p:P0}");
+
+            var result = await _pdfEditor.CompressAsync(
+                _pdfEngine.FilePath, output, imageDpi, quality, progress);
+
+            if (result.IsSuccess)
+            {
+                var newSize  = new FileInfo(output).Length;
+                var savedPct = origSize > 0 ? (1.0 - (double)newSize / origSize) * 100 : 0;
+                StatusText = $"Compressed: {FormatFileSize(origSize)} → {FormatFileSize(newSize)} " +
+                             $"(−{savedPct:N1}%) → {Path.GetFileName(output)}";
+                _logger.LogInformation("ReduceSize complete: {Result}", result.Message);
+            }
+            else
+            {
+                StatusText = $"Compression failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ReduceSize failed");
+            StatusText = $"Compression error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:N1} MB";
+        if (bytes >= 1_024)     return $"{bytes / 1_024.0:N0} KB";
+        return $"{bytes} B";
     }
 
     public event EventHandler?    SignRequested;

@@ -24,6 +24,31 @@
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
   </ItemGroup>
+  <!-- Download PDF.js pre-built viewer on first build.
+       The viewer runs inside WebView2 as a JS PDF renderer so ExecuteScriptAsync
+       can fully control its find/highlight layer — unlike the native Edge PDF plugin
+       which is sandboxed and unreachable from JavaScript. -->
+  <Target Name="DownloadPdfJs" AfterTargets="Build"
+          Condition="!Exists('$(OutputPath)pdfjs/web/viewer.html')">
+    <PropertyGroup>
+      <PdfJsVersion>4.4.168</PdfJsVersion>
+      <PdfJsTmpDir>$(OutputPath)pdfjs-tmp</PdfJsTmpDir>
+      <PdfJsZip>$(PdfJsTmpDir)/pdfjs.zip</PdfJsZip>
+      <PdfJsDir>$(OutputPath)pdfjs</PdfJsDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(PdfJsTmpDir);$(PdfJsDir)" />
+    <DownloadFile
+      SourceUrl="https://github.com/mozilla/pdf.js/releases/download/v$(PdfJsVersion)/pdfjs-$(PdfJsVersion)-dist.zip"
+      DestinationFolder="$(PdfJsTmpDir)"
+      DestinationFileName="pdfjs.zip"
+      Retries="2"
+      ContinueOnError="WarnAndContinue" />
+    <Exec Condition="Exists('$(PdfJsZip)')"
+          Command="powershell -NoProfile -Command &quot;Expand-Archive -LiteralPath '$(PdfJsZip)' -DestinationPath '$(PdfJsDir)' -Force&quot;"
+          ContinueOnError="WarnAndContinue" />
+    <Message Text="[Viewer] PDF.js $(PdfJsVersion) → $(PdfJsDir)" Importance="high" />
+  </Target>
+
   <!-- Download eng.traineddata for Tesseract OCR on first build if not already present -->
   <Target Name="DownloadEngTraineddata" AfterTargets="Build"
           Condition="!Exists('$(OutputPath)tessdata/eng.traineddata')">
