@@ -1,0 +1,165 @@
+<Window x:Class="PDFAgent.App.Views.SortPagesDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:converters="clr-namespace:PDFAgent.App.Converters"
+        Title="Sort PDF Pages"
+        Width="640" Height="520"
+        MinWidth="480" MinHeight="380"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        FontFamily="{DynamicResource BodyFont}"
+        TextOptions.TextFormattingMode="Ideal"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <converters:BytesToImageConverter x:Key="BytesToImage" />
+    </Window.Resources>
+
+    <Grid Margin="24,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*"    />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <TextBlock Grid.Row="0"
+                   Text="Sort PDF Pages"
+                   FontFamily="{DynamicResource HeadingFont}"
+                   FontSize="18" FontWeight="SemiBold"
+                   Foreground="{DynamicResource OnSurfaceBrush}"
+                   Margin="0,0,0,4" />
+        <TextBlock x:Name="SubtitleLabel"
+                   Grid.Row="1"
+                   FontSize="12"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,16" />
+
+        <!-- Quick sort row -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="QUICK SORT:"
+                       FontSize="11" FontWeight="Bold"
+                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0" />
+            <Button Content="Reverse"
+                    Style="{StaticResource OutlinedButton}"
+                    Height="26" Padding="10,0" FontSize="12"
+                    Margin="0,0,6,0"
+                    Click="Reverse_Click" />
+            <Button Content="Odd pages first"
+                    Style="{StaticResource OutlinedButton}"
+                    Height="26" Padding="10,0" FontSize="12"
+                    Margin="0,0,6,0"
+                    Click="OddFirst_Click" />
+            <Button Content="Even pages first"
+                    Style="{StaticResource OutlinedButton}"
+                    Height="26" Padding="10,0" FontSize="12"
+                    Margin="0,0,6,0"
+                    Click="EvenFirst_Click" />
+            <Button Content="Reset"
+                    Style="{StaticResource OutlinedButton}"
+                    Height="26" Padding="10,0" FontSize="12"
+                    Click="Reset_Click" />
+        </StackPanel>
+
+        <!-- Page grid -->
+        <Border Grid.Row="3"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
+                BorderThickness="1"
+                Background="{DynamicResource SurfaceContainerLowBrush}">
+            <ListBox x:Name="PageList"
+                     AllowDrop="True"
+                     SelectionMode="Single"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     PreviewMouseLeftButtonDown="PageList_PreviewMouseLeftButtonDown"
+                     PreviewMouseMove="PageList_PreviewMouseMove"
+                     DragOver="PageList_DragOver"
+                     DragLeave="PageList_DragLeave"
+                     Drop="PageList_Drop"
+                     Padding="6">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding"            Value="0" />
+                        <Setter Property="Margin"             Value="0" />
+                        <Setter Property="Background"         Value="Transparent" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="4"
+                                CornerRadius="4"
+                                Background="{DynamicResource SurfaceContainerLowestBrush}"
+                                Padding="4">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="BorderBrush"     Value="{DynamicResource OutlineVariantBrush}" />
+                                    <Setter Property="BorderThickness" Value="1" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDropTarget}" Value="True">
+                                            <Setter Property="BorderBrush"     Value="#0078D4" />
+                                            <Setter Property="BorderThickness" Value="2" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel Width="90">
+                                <Border Background="{DynamicResource SurfaceContainerLowBrush}"
+                                        CornerRadius="2"
+                                        Margin="0,0,0,4">
+                                    <Image Source="{Binding Thumbnail, Converter={StaticResource BytesToImage}}"
+                                           MaxWidth="88" MaxHeight="120"
+                                           Stretch="Uniform"
+                                           Margin="2" />
+                                </Border>
+                                <TextBlock Text="{Binding Position}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource OnSurfaceBrush}"
+                                           HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Separator Grid.Row="4"
+                   Background="{DynamicResource OutlineVariantBrush}"
+                   Margin="0,12,0,12" />
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel"
+                    Style="{StaticResource OutlinedButton}"
+                    Width="96" Margin="0,0,8,0"
+                    IsCancel="True"
+                    Click="Cancel_Click" />
+            <Button Content="Apply Order"
+                    Style="{StaticResource FilledButton}"
+                    Width="120"
+                    IsDefault="True"
+                    Click="Apply_Click" />
+        </StackPanel>
+
+    </Grid>
+</Window>

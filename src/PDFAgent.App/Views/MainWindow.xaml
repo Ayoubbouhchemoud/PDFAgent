@@ -160,6 +160,11 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding RotateCommand}" ToolTip="Rotate page">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconRotate}" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding SortPagesCommand}" ToolTip="Sort / reorder PDF pages">
+                        <TextBlock Text="⇅" FontSize="15"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                    </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding ReduceSizeCommand}" ToolTip="Reduce PDF size">
                         <TextBlock Text="⇩" FontSize="15"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"

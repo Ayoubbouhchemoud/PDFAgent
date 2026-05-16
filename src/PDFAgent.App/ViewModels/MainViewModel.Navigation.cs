@@ -31,6 +31,7 @@ public sealed partial class MainViewModel
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConvertFromPdfCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SortPagesCommand))]
     private bool _isDocumentLoaded;
 
     // ── Search state ──────────────────────────────────────────────────────────

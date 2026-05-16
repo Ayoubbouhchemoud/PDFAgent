@@ -57,6 +57,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConvertToPdfCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConvertFromPdfCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SortPagesCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -573,6 +574,83 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 _logger.LogError(ex, "Failed to reopen file after rotate");
             }
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
+            UndoCommand.NotifyCanExecuteChanged();
+            IsBusy = false;
+        }
+    }
+
+    // ── Sort Pages ──────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task SortPagesAsync()
+    {
+        // Snapshot thumbnails before showing the dialog (while app is fully interactive).
+        var snapshot = Thumbnails
+            .Select(t => (t.PageNumber - 1, t.Thumbnail))
+            .ToList();
+
+        var dlg = new Views.SortPagesDialog(snapshot)
+            { Owner = System.Windows.Application.Current.MainWindow };
+        if (dlg.ShowDialog() != true) return;
+
+        var newOrder = dlg.NewOrder;
+
+        // Skip if order is unchanged
+        if (newOrder.Count == TotalPages &&
+            newOrder.Select((origIdx, pos) => origIdx == pos).All(v => v))
+        {
+            StatusText = "Pages are already in this order — no changes made.";
+            return;
+        }
+
+        var path      = _pdfEngine.FilePath;
+        string? undoSnap  = null;
+        string? failStatus = null;
+
+        IsBusy = true;
+        StatusText = "Sorting pages…";
+        try
+        {
+            undoSnap = MakeUndoSnapshot();
+            await _pdfEngine.CloseAsync();
+
+            var result = await _pdfEditor.ReorderPagesAsync(path, newOrder);
+            if (result.IsSuccess)
+            {
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
+                StatusText = $"Pages sorted — {result.Message}";
+            }
+            else
+            {
+                failStatus = StatusText = $"Sort failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SortPages failed");
+            failStatus = StatusText = $"Sort error: {ex.Message}";
+        }
+        finally
+        {
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+                    CurrentPage  = 1;
+                    await LoadThumbnailsAsync(ct);
+                    ViewerRefreshRequested?.Invoke();
+                    await RenderCurrentPagesAsync(ct, finalStatus: failStatus);
+                }
+            }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to reopen after sort"); }
             try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
             UndoCommand.NotifyCanExecuteChanged();
             IsBusy = false;
