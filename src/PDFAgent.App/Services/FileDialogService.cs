@@ -45,11 +45,11 @@ public sealed class FileDialogService : IFileDialogService
 
     public string? SelectFolder()
     {
-        var dialog = new System.Windows.Forms.FolderBrowserDialog
+        var dialog = new Microsoft.Win32.OpenFolderDialog
         {
-            Description = "Select output folder",
+            Title = "Select output folder",
         };
-        return dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK ? dialog.SelectedPath : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FolderName : null;
     }
 
     public string? OpenImage()
