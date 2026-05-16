@@ -792,21 +792,54 @@ public sealed partial class MainViewModel : ObservableObject
         { Owner = System.Windows.Application.Current.MainWindow };
         if (dlg.ShowDialog() != true) return;
 
+        // Resolve the output path/folder BEFORE setting IsBusy — all save dialogs
+        // must be shown while the main window is still fully interactive.
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
+        var ext      = dlg.UseJpeg ? ".jpg" : ".png";
+        var pageIdx  = dlg.AllPages ? 0 : CurrentPage - 1;
+
+        string? outputFile   = null;
+        string? outputFolder = null;
+
+        switch (dlg.SelectedFormat)
+        {
+            case Views.ConvertFromFormat.Images:
+                if (!dlg.AllPages || TotalPages == 1)
+                    outputFile = _fileDialog.SaveImageFile($"{baseName}_page{pageIdx + 1}{ext}");
+                else
+                    outputFolder = _fileDialog.SelectFolder();
+                break;
+
+            case Views.ConvertFromFormat.Word:
+                outputFile = _fileDialog.SaveDocxFile($"{baseName}.docx");
+                break;
+
+            case Views.ConvertFromFormat.Text:
+                outputFile = _fileDialog.SaveTextFile($"{baseName}.txt");
+                break;
+        }
+
+        if (outputFile == null && outputFolder == null) return;
+
         IsBusy = true;
         try
         {
             switch (dlg.SelectedFormat)
             {
                 case Views.ConvertFromFormat.Images:
-                    await ExportPagesToImagesAsync(dlg.AllPages, dlg.UseJpeg, dlg.SelectedDpi);
+                    await ExportPagesToImagesAsync(
+                        dlg.AllPages, dlg.UseJpeg, dlg.SelectedDpi,
+                        pageIdx, outputFile, outputFolder, baseName);
                     break;
 
                 case Views.ConvertFromFormat.Word:
-                    await ExportPdfToWordAsync();
+                    StatusText = "Converting to Word — this may take a moment…";
+                    var wordResult = await _pdfEditor.ConvertPdfToWordAsync(_pdfEngine.FilePath, outputFile!);
+                    StatusText = wordResult.IsSuccess ? $"Done — {wordResult.Message}" : $"Failed: {wordResult.Message}";
                     break;
 
                 case Views.ConvertFromFormat.Text:
-                    await ExportPdfToTextAsync();
+                    await ExportPdfToTextAsync(outputFile!);
                     break;
             }
         }
@@ -818,49 +851,45 @@ public sealed partial class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
-    private async Task ExportPagesToImagesAsync(bool allPages, bool useJpeg, int dpi)
+    private async Task ExportPagesToImagesAsync(
+        bool allPages, bool useJpeg, int dpi,
+        int singlePageIdx, string? outputFile, string? outputFolder, string baseName)
     {
-        var ext      = useJpeg ? ".jpg" : ".png";
-        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        var ext = useJpeg ? ".jpg" : ".png";
 
-        if (!allPages || TotalPages == 1)
+        if (outputFile != null)
         {
-            var pageIdx = allPages ? 0 : CurrentPage - 1;
-            var output  = _fileDialog.SaveImageFile($"{baseName}_page{pageIdx + 1}{ext}");
-            if (output == null) return;
-
-            StatusText = $"Rendering page {pageIdx + 1}…";
-            var result = await _pdfEngine.RenderPageAsync(pageIdx, dpi);
+            // Single page
+            StatusText = $"Rendering page {singlePageIdx + 1}…";
+            var result = await _pdfEngine.RenderPageAsync(singlePageIdx, dpi);
             if (!result.IsSuccess || result.Value == null)
             { StatusText = $"Failed: {result.Message}"; return; }
 
             var bytes = useJpeg ? ConvertPngToJpeg(result.Value) : result.Value;
-            await File.WriteAllBytesAsync(output, bytes);
-            StatusText = $"Saved page {pageIdx + 1} → {Path.GetFileName(output)}";
+            await File.WriteAllBytesAsync(outputFile, bytes);
+            StatusText = $"Saved page {singlePageIdx + 1} → {Path.GetFileName(outputFile)}";
             return;
         }
 
-        var folder = _fileDialog.SelectFolder();
-        if (folder == null) return;
-
+        // All pages → folder
         for (var i = 0; i < TotalPages; i++)
         {
             StatusText = $"Rendering page {i + 1} of {TotalPages}…";
             var result = await _pdfEngine.RenderPageAsync(i, dpi);
             if (!result.IsSuccess || result.Value == null) continue;
 
-            var fileName = Path.Combine(folder, $"{baseName}_page{i + 1:D3}{ext}");
+            var fileName = Path.Combine(outputFolder!, $"{baseName}_page{i + 1:D3}{ext}");
             var bytes    = useJpeg ? ConvertPngToJpeg(result.Value) : result.Value;
             await File.WriteAllBytesAsync(fileName, bytes);
         }
-        StatusText = $"Exported {TotalPages} pages as {(useJpeg ? "JPEG" : "PNG")} → {folder}";
+        StatusText = $"Exported {TotalPages} pages as {(useJpeg ? "JPEG" : "PNG")} → {outputFolder}";
     }
 
     private static byte[] ConvertPngToJpeg(byte[] pngBytes)
     {
-        using var ms     = new MemoryStream(pngBytes);
-        using var bmp    = new System.Drawing.Bitmap(ms);
-        using var outMs  = new MemoryStream();
+        using var ms    = new MemoryStream(pngBytes);
+        using var bmp   = new System.Drawing.Bitmap(ms);
+        using var outMs = new MemoryStream();
         var codec = System.Drawing.Imaging.ImageCodecInfo
             .GetImageDecoders()
             .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
@@ -871,25 +900,8 @@ public sealed partial class MainViewModel : ObservableObject
         return outMs.ToArray();
     }
 
-    private async Task ExportPdfToWordAsync()
+    private async Task ExportPdfToTextAsync(string outputFile)
     {
-        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
-        var output   = _fileDialog.SaveDocxFile($"{baseName}.docx");
-        if (output == null) return;
-
-        StatusText = "Converting to Word — this may take a moment…";
-        var result = await _pdfEditor.ConvertPdfToWordAsync(_pdfEngine.FilePath, output);
-        StatusText = result.IsSuccess
-            ? $"Done — {result.Message}"
-            : $"Failed: {result.Message}";
-    }
-
-    private async Task ExportPdfToTextAsync()
-    {
-        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
-        var output   = _fileDialog.SaveTextFile($"{baseName}.txt");
-        if (output == null) return;
-
         StatusText = "Extracting text…";
         var sb = new StringBuilder();
         for (var i = 0; i < TotalPages; i++)
@@ -910,8 +922,8 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        await File.WriteAllTextAsync(output, sb.ToString(), System.Text.Encoding.UTF8);
-        StatusText = $"Saved text → {Path.GetFileName(output)}";
+        await File.WriteAllTextAsync(outputFile, sb.ToString(), System.Text.Encoding.UTF8);
+        StatusText = $"Saved text → {Path.GetFileName(outputFile)}";
     }
 
     private async Task TryOpenResultAsync(string pdfPath)

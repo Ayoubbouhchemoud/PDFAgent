@@ -93,7 +93,7 @@ public sealed class FileDialogService : IFileDialogService
             FileName = defaultName,
             DefaultExt = ".png",
         };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
     public void ShowProperties(PdfDocumentInfo info)
