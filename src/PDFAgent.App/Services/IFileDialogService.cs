@@ -34,6 +34,9 @@ public interface IFileDialogService
 
     /// <summary>Opens a file picker for "Convert to PDF" — images, Word, Excel, PowerPoint, TXT.</summary>
     IReadOnlyList<string> OpenForConversion();
+
+    /// <summary>Shows a save dialog for a Word .docx file.</summary>
+    string? SaveDocxFile(string defaultName);
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>

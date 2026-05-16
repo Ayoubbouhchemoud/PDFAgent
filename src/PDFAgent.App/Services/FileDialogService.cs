@@ -163,6 +163,18 @@ public sealed class FileDialogService : IFileDialogService
             dialog.Degrees);
     }
 
+    public string? SaveDocxFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter      = "Word document (*.docx)|*.docx|All files (*.*)|*.*",
+            Title       = "Save Word Document as…",
+            FileName    = defaultName,
+            DefaultExt  = ".docx",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
     public IReadOnlyList<string> OpenForConversion()
     {
         var dialog = new OpenFileDialog

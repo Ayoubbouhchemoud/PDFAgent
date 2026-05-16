@@ -56,6 +56,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(ReduceSizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConvertToPdfCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ConvertFromPdfCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -780,6 +781,138 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private bool CanConvert() => !IsBusy;
+
+    // ── Convert PDF to… ──────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ConvertFromPdfAsync()
+    {
+        var dlg = new Views.ConvertFromPdfDialog(
+            DocumentInfo!.FileName, TotalPages, CurrentPage)
+        { Owner = System.Windows.Application.Current.MainWindow };
+        if (dlg.ShowDialog() != true) return;
+
+        IsBusy = true;
+        try
+        {
+            switch (dlg.SelectedFormat)
+            {
+                case Views.ConvertFromFormat.Images:
+                    await ExportPagesToImagesAsync(dlg.AllPages, dlg.UseJpeg, dlg.SelectedDpi);
+                    break;
+
+                case Views.ConvertFromFormat.Word:
+                    await ExportPdfToWordAsync();
+                    break;
+
+                case Views.ConvertFromFormat.Text:
+                    await ExportPdfToTextAsync();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ConvertFromPdf failed");
+            StatusText = $"Conversion error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
+    private async Task ExportPagesToImagesAsync(bool allPages, bool useJpeg, int dpi)
+    {
+        var ext      = useJpeg ? ".jpg" : ".png";
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+
+        if (!allPages || TotalPages == 1)
+        {
+            var pageIdx = allPages ? 0 : CurrentPage - 1;
+            var output  = _fileDialog.SaveImageFile($"{baseName}_page{pageIdx + 1}{ext}");
+            if (output == null) return;
+
+            StatusText = $"Rendering page {pageIdx + 1}…";
+            var result = await _pdfEngine.RenderPageAsync(pageIdx, dpi);
+            if (!result.IsSuccess || result.Value == null)
+            { StatusText = $"Failed: {result.Message}"; return; }
+
+            var bytes = useJpeg ? ConvertPngToJpeg(result.Value) : result.Value;
+            await File.WriteAllBytesAsync(output, bytes);
+            StatusText = $"Saved page {pageIdx + 1} → {Path.GetFileName(output)}";
+            return;
+        }
+
+        var folder = _fileDialog.SelectFolder();
+        if (folder == null) return;
+
+        for (var i = 0; i < TotalPages; i++)
+        {
+            StatusText = $"Rendering page {i + 1} of {TotalPages}…";
+            var result = await _pdfEngine.RenderPageAsync(i, dpi);
+            if (!result.IsSuccess || result.Value == null) continue;
+
+            var fileName = Path.Combine(folder, $"{baseName}_page{i + 1:D3}{ext}");
+            var bytes    = useJpeg ? ConvertPngToJpeg(result.Value) : result.Value;
+            await File.WriteAllBytesAsync(fileName, bytes);
+        }
+        StatusText = $"Exported {TotalPages} pages as {(useJpeg ? "JPEG" : "PNG")} → {folder}";
+    }
+
+    private static byte[] ConvertPngToJpeg(byte[] pngBytes)
+    {
+        using var ms     = new MemoryStream(pngBytes);
+        using var bmp    = new System.Drawing.Bitmap(ms);
+        using var outMs  = new MemoryStream();
+        var codec = System.Drawing.Imaging.ImageCodecInfo
+            .GetImageDecoders()
+            .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+        var enc = new System.Drawing.Imaging.EncoderParameters(1);
+        enc.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+            System.Drawing.Imaging.Encoder.Quality, 90L);
+        bmp.Save(outMs, codec, enc);
+        return outMs.ToArray();
+    }
+
+    private async Task ExportPdfToWordAsync()
+    {
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        var output   = _fileDialog.SaveDocxFile($"{baseName}.docx");
+        if (output == null) return;
+
+        StatusText = "Converting to Word — this may take a moment…";
+        var result = await _pdfEditor.ConvertPdfToWordAsync(_pdfEngine.FilePath, output);
+        StatusText = result.IsSuccess
+            ? $"Done — {result.Message}"
+            : $"Failed: {result.Message}";
+    }
+
+    private async Task ExportPdfToTextAsync()
+    {
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo!.FileName);
+        var output   = _fileDialog.SaveTextFile($"{baseName}.txt");
+        if (output == null) return;
+
+        StatusText = "Extracting text…";
+        var sb = new StringBuilder();
+        for (var i = 0; i < TotalPages; i++)
+        {
+            StatusText = $"Extracting text from page {i + 1} of {TotalPages}…";
+            var result = await _pdfEngine.GetPageTextAsync(i);
+            if (result.IsSuccess && !string.IsNullOrEmpty(result.Value))
+            {
+                if (TotalPages > 1) sb.AppendLine($"=== Page {i + 1} ===");
+                sb.AppendLine(result.Value);
+                sb.AppendLine();
+            }
+        }
+
+        if (sb.Length == 0)
+        {
+            StatusText = "No text layer found — try OCR for scanned documents";
+            return;
+        }
+
+        await File.WriteAllTextAsync(output, sb.ToString(), System.Text.Encoding.UTF8);
+        StatusText = $"Saved text → {Path.GetFileName(output)}";
+    }
 
     private async Task TryOpenResultAsync(string pdfPath)
     {

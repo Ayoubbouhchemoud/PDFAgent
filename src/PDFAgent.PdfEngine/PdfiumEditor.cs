@@ -987,6 +987,32 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    public Task<OperationResult> ConvertPdfToWordAsync(
+        string inputPath, string outputPath, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var temp = WordFromPdfConverter.ConvertToDocx(inputPath);
+                if (temp == null)
+                    return OperationResult.Fail(
+                        "Word could not open the PDF. Ensure Microsoft Word 2013 or later is installed.");
+
+                File.Move(temp, outputPath, overwrite: true);
+                _logger.LogInformation("PDF→DOCX: {In} → {Out}", inputPath, outputPath);
+                return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ConvertPdfToWord failed");
+                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
+                return OperationResult.Fail($"Word conversion failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
     private static IEnumerable<string> WrapLine(string line, XFont font, double maxWidth)
     {
         if (string.IsNullOrEmpty(line)) { yield return string.Empty; yield break; }

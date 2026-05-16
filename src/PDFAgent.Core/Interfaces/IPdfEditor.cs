@@ -48,6 +48,15 @@ public interface IPdfEditor
         string outputPath,
         IProgress<double>? progress = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Convert a PDF to a Word document (.docx) using Microsoft Word's native PDF import.
+    /// Requires Microsoft Word 2013 or later to be installed.
+    /// </summary>
+    Task<OperationResult> ConvertPdfToWordAsync(
+        string inputPath,
+        string outputPath,
+        CancellationToken ct = default);
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }

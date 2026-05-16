@@ -170,6 +170,11 @@
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    VerticalAlignment="Center" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ConvertFromPdfCommand}" ToolTip="Convert PDF to images, Word, or text">
+                        <TextBlock Text="⇒" FontSize="15"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                    </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding UndoCommand}" ToolTip="Undo last operation (Ctrl+Z)">
                         <TextBlock Text="↩" FontSize="15"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
