@@ -165,11 +165,12 @@ public sealed class PdfExporter : IPdfExporter
                   height: auto;
                   margin: 0.8em auto;
                 }
-                .scanned {
-                  display: block;
-                  max-width: 100%;
-                  height: auto;
-                  margin: 0 auto;
+                .no-text-layer {
+                  color: #888;
+                  font-style: italic;
+                  border: 1px dashed #ccc;
+                  padding: 1em;
+                  text-align: center;
                 }
               </style>
             </head>
@@ -177,44 +178,45 @@ public sealed class PdfExporter : IPdfExporter
             """);
         sb.AppendLine();
 
-        // Keep PdfiumViewer open once — only used if a page has no text layer (scanned)
-        PdfiumViewer.PdfDocument? pdfDoc = null;
-        try { pdfDoc = PdfiumViewer.PdfDocument.Load(inputPath); } catch { }
-
-        try
+        for (int i = start; i <= end; i++)
         {
-            for (int i = start; i <= end; i++)
+            ct.ThrowIfCancellationRequested();
+            var page = pigDoc.GetPage(i + 1);
+
+            sb.Append($"<div class=\"page\" id=\"page{i + 1}\">\n");
+            if (total > 1)
+                sb.Append($"<p class=\"page-num\">Page {i + 1} / {total}</p>\n");
+
+            // Primary path: word-level extraction — gives correctly ordered text for every PDF.
+            var pageWords = page.GetWords().ToList();
+            if (pageWords.Count > 0)
             {
-                ct.ThrowIfCancellationRequested();
-                var page = pigDoc.GetPage(i + 1);
-
-                sb.Append($"<div class=\"page\" id=\"page{i + 1}\">\n");
-                if (total > 1)
-                    sb.Append($"<p class=\"page-num\">Page {i + 1} / {total}</p>\n");
-
-                // Word-level extraction gives correctly ordered text for every PDF.
-                // Use it as the primary path; fall back to a rendered image only for
-                // truly scanned pages (no text layer at all).
-                var pageWords = page.GetWords().ToList();
-                if (pageWords.Count > 0)
-                {
-                    HtmlRenderWordBasedPage(sb, page, pageWords);
-                }
-                else if (pdfDoc != null)
-                {
-                    // Scanned / image-only page — render as a full-page image
-                    var png = RenderPageToPng(pdfDoc, i, 150);
-                    var b64 = Convert.ToBase64String(png);
-                    sb.Append($"<img class=\"scanned\" src=\"data:image/png;base64,{b64}\" alt=\"Page {i + 1}\"/>\n");
-                }
-
-                sb.Append("</div>\n");
-                progress?.Report((i - start + 1, end - start + 1));
+                HtmlRenderWordBasedPage(sb, page, pageWords);
             }
-        }
-        finally
-        {
-            pdfDoc?.Dispose();
+            else
+            {
+                // Fallback: letter-level extraction (for PDFs where the word-segmenter
+                // finds nothing but individual letters are still present).
+                var letters = page.Letters
+                    .Where(l => !string.IsNullOrEmpty(l.Value))
+                    .ToList();
+                if (letters.Count > 0)
+                {
+                    var lines = ExtractDocLinesFromLetters(letters);
+                    HtmlRenderTextLines(sb, lines);
+                }
+                else
+                {
+                    // Genuinely scanned / image-only page — no text layer at all.
+                    // Emit a notice; do NOT rasterize the page into a screenshot.
+                    sb.AppendLine(
+                        $"<p class=\"no-text-layer\">Page {i + 1} — no text layer detected. " +
+                        "This page may be a scanned image. Run OCR to make it searchable.</p>");
+                }
+            }
+
+            sb.Append("</div>\n");
+            progress?.Report((i - start + 1, end - start + 1));
         }
 
         sb.Append("</body>\n</html>");

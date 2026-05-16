@@ -416,6 +416,26 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
+    public async Task ExportHtml_TextPdf_NeverProducesPageScreenshot()
+    {
+        // A PDF with a real text layer must NEVER be rasterized into a base64 page image.
+        var dest = Path.Combine(_dir, "no_screenshot.html");
+        var r    = await Export(ExportFormat.Html, dest);
+
+        r.IsSuccess.Should().BeTrue(r.Message);
+        var html = File.ReadAllText(dest, Encoding.UTF8);
+
+        // The old fallback embedded the entire page as a data-URI PNG — must not appear.
+        html.Should().NotContain("class=\"scanned\"",
+            "full-page rasterized images must not appear in HTML for text PDFs");
+        // And the output must not be dominated by a single giant base64 blob
+        // (no scanned-image path means no massive data:image/png inline for a full page).
+        // Real text pages must contain semantic elements, not just an <img>.
+        html.Should().Contain("<p>",
+            "text PDFs must produce real paragraph elements, not only images");
+    }
+
+    [Fact]
     public async Task ExportHtml_TwoDistinctBlocks_ProducesSeparateParagraphs()
     {
         var pdf = Path.Combine(_dir, "two_block.pdf");
