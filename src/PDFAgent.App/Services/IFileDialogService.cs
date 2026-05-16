@@ -37,7 +37,27 @@ public interface IFileDialogService
 
     /// <summary>Shows a save dialog for a Word .docx file.</summary>
     string? SaveDocxFile(string defaultName);
+
+    /// <summary>Shows a save dialog for an HTML file.</summary>
+    string? SaveHtmlFile(string defaultName);
+
+    /// <summary>Shows a save dialog for an EPUB file.</summary>
+    string? SaveEpubFile(string defaultName);
+
+    /// <summary>Shows a save dialog for an SVG file (single-page export).</summary>
+    string? SaveSvgFile(string defaultName);
+
+    /// <summary>Shows a save dialog for a PowerPoint .pptx file.</summary>
+    string? SavePptxFile(string defaultName);
+
+    /// <summary>Shows a save dialog for an Excel .xlsx file.</summary>
+    string? SaveXlsxFile(string defaultName);
+
+    /// <summary>Shows the Secure PDF password dialog. Returns null if cancelled.</summary>
+    SecurePdfDialogResult? ShowSecurePdfDialog();
 }
+
+public sealed record SecurePdfDialogResult(string? UserPassword, string? OwnerPassword);
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
 public sealed record RotateDialogResult(

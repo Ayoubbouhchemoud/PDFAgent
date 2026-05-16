@@ -1,8 +1,9 @@
 <Window x:Class="PDFAgent.App.Views.ConvertFromPdfDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Convert PDF to…"
-        Width="460" SizeToContent="Height"
+        Title="Export PDF as…"
+        Width="500" SizeToContent="Height"
+        MaxHeight="740"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
@@ -14,154 +15,201 @@
     <StackPanel Margin="24,20">
 
         <!-- Header -->
-        <TextBlock Text="Convert PDF to…"
+        <TextBlock Text="Export PDF as…"
                    FontFamily="{DynamicResource HeadingFont}"
                    FontSize="18" FontWeight="SemiBold"
                    Foreground="{DynamicResource OnSurfaceBrush}"
-                   Margin="0,0,0,4" />
+                   Margin="0,0,0,4"/>
         <TextBlock x:Name="InfoLabel"
                    FontSize="12"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                   Margin="0,0,0,20" />
+                   Margin="0,0,0,20"/>
 
-        <!-- Format selection -->
-        <TextBlock Text="TARGET FORMAT"
-                   FontSize="11" FontWeight="Bold"
+        <!-- ── Text formats ───────────────────────────────────────────── -->
+        <TextBlock Text="TEXT"
+                   FontSize="10" FontWeight="Bold"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                   Margin="0,0,0,10" />
+                   Margin="0,0,0,6"/>
 
-        <RadioButton x:Name="RadioImages"
-                     Content="Images (PNG / JPEG) — one image per page"
-                     GroupName="Format"
-                     IsChecked="True"
-                     Foreground="{DynamicResource OnSurfaceBrush}"
-                     FontSize="13"
-                     Checked="Format_Changed"
-                     Margin="0,0,0,6" />
-
-        <RadioButton x:Name="RadioWord"
-                     Content="Word document (.docx) — requires Microsoft Word"
-                     GroupName="Format"
-                     Foreground="{DynamicResource OnSurfaceBrush}"
-                     FontSize="13"
-                     Checked="Format_Changed"
-                     Margin="0,0,0,6" />
-
-        <RadioButton x:Name="RadioText"
-                     Content="Plain text (.txt) — extract text layer"
-                     GroupName="Format"
-                     Foreground="{DynamicResource OnSurfaceBrush}"
-                     FontSize="13"
-                     Checked="Format_Changed"
-                     Margin="0,0,0,16" />
-
-        <!-- Image options panel -->
-        <StackPanel x:Name="ImageOptions">
-
-            <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,0,0,16" />
-
-            <!-- Image format -->
-            <TextBlock Text="IMAGE FORMAT"
-                       FontSize="11" FontWeight="Bold"
-                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                       Margin="0,0,0,8" />
-
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                <RadioButton x:Name="RadioPng"
-                             Content="PNG (lossless)"
-                             GroupName="ImgFmt"
-                             IsChecked="True"
-                             Foreground="{DynamicResource OnSurfaceBrush}"
-                             FontSize="13"
-                             Margin="0,0,20,0" />
-                <RadioButton x:Name="RadioJpeg"
-                             Content="JPEG (smaller)"
-                             GroupName="ImgFmt"
-                             Foreground="{DynamicResource OnSurfaceBrush}"
-                             FontSize="13" />
+        <RadioButton x:Name="RadioTxt"   GroupName="Fmt" IsChecked="True" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Text (.txt)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Extract text layer" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
             </StackPanel>
+        </RadioButton>
 
-            <!-- Page scope -->
-            <TextBlock Text="PAGES"
-                       FontSize="11" FontWeight="Bold"
-                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                       Margin="0,0,0,8" />
-
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                <RadioButton x:Name="RadioAllPages"
-                             Content="All pages"
-                             GroupName="Scope"
-                             IsChecked="True"
-                             Foreground="{DynamicResource OnSurfaceBrush}"
-                             FontSize="13"
-                             Margin="0,0,20,0" />
-                <RadioButton x:Name="RadioCurrentPage"
-                             Content="Current page only"
-                             GroupName="Scope"
-                             Foreground="{DynamicResource OnSurfaceBrush}"
-                             FontSize="13" />
+        <RadioButton x:Name="RadioHtml"  GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="HTML (.html)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Web page with positioned text" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
             </StackPanel>
+        </RadioButton>
 
-            <!-- DPI -->
-            <TextBlock Text="RESOLUTION (DPI)"
-                       FontSize="11" FontWeight="Bold"
-                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                       Margin="0,0,0,8" />
+        <RadioButton x:Name="RadioEpub"  GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="EPUB (.epub)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="E-book format" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
 
-            <Grid Margin="0,0,0,4">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="60" />
-                </Grid.ColumnDefinitions>
-                <Slider x:Name="DpiSlider"
-                        Grid.Column="0"
-                        Minimum="72" Maximum="300"
-                        Value="150"
-                        TickFrequency="1"
-                        IsSnapToTickEnabled="True"
-                        ValueChanged="DpiSlider_ValueChanged"
-                        Margin="0,0,12,0" />
-                <TextBlock x:Name="DpiLabel"
-                           Grid.Column="1"
-                           Text="150 DPI"
-                           FontSize="13" FontWeight="SemiBold"
-                           Foreground="{DynamicResource OnSurfaceBrush}"
-                           VerticalAlignment="Center" />
-            </Grid>
+        <!-- ── Image formats ──────────────────────────────────────────── -->
+        <TextBlock Text="IMAGES"
+                   FontSize="10" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,6"/>
 
-            <Grid Margin="0,0,0,4">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="60" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="72" FontSize="11"
-                           Foreground="{DynamicResource OutlineBrush}" />
-                <TextBlock Grid.Column="1" Text="300" FontSize="11"
-                           Foreground="{DynamicResource OutlineBrush}"
-                           HorizontalAlignment="Right" Margin="0,0,60,0" />
-            </Grid>
+        <RadioButton x:Name="RadioPng"   GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PNG (.png)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Lossless, one image per page" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
 
-            <TextBlock x:Name="DpiHint" FontSize="11"
-                       Foreground="{DynamicResource OutlineBrush}"
-                       Margin="0,0,0,4" />
+        <RadioButton x:Name="RadioJpg"   GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="JPEG (.jpg)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Compressed, one image per page" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
 
-        </StackPanel>
+        <RadioButton x:Name="RadioSvg"   GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="SVG (.svg)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Raster-embedded vector container" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
 
-        <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,16,0,12" />
+        <!-- ── PDF variants ───────────────────────────────────────────── -->
+        <TextBlock Text="PDF VARIANTS"
+                   FontSize="10" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,6"/>
 
-        <!-- Buttons -->
+        <RadioButton x:Name="RadioPdf"    GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PDF (copy)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Exact copy of the current file" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioPdfA1" GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PDF/A-1b" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="ISO 19005-1 archival  [best-effort]" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioPdfA2" GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PDF/A-2b" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="ISO 19005-2 archival  [best-effort]" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioPdfA3" GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PDF/A-3b" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="ISO 19005-3 archival  [best-effort]" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioSecure" GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Secure PDF" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Password-protected copy" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <!-- ── Office formats ─────────────────────────────────────────── -->
+        <TextBlock Text="OFFICE"
+                   FontSize="10" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,6"/>
+
+        <RadioButton x:Name="RadioDocx"  GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Word (.docx)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Document — Word COM or text fallback" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioPptx"  GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,4">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PowerPoint (.pptx)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="One slide per page (image)" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <RadioButton x:Name="RadioXlsx"  GroupName="Fmt" Checked="Format_Changed" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Excel (.xlsx)" FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}" Width="160"/>
+                <TextBlock Text="Extracted text, one sheet per page" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+            </StackPanel>
+        </RadioButton>
+
+        <!-- ── Format-specific options ────────────────────────────────── -->
+        <Border x:Name="ImageOptionsPanel"
+                Background="{DynamicResource SurfaceVariantBrush}"
+                CornerRadius="6"
+                Padding="14,12"
+                Margin="0,0,0,12"
+                Visibility="Collapsed">
+            <StackPanel>
+
+                <TextBlock Text="PAGE SCOPE"
+                           FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,0,8"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <RadioButton x:Name="RadioAllPages"
+                                 Content="All pages (save to folder)"
+                                 GroupName="Scope" IsChecked="True"
+                                 Foreground="{DynamicResource OnSurfaceBrush}"
+                                 FontSize="13" Margin="0,0,16,0"/>
+                    <RadioButton x:Name="RadioCurrentPage"
+                                 Content="Current page only"
+                                 GroupName="Scope"
+                                 Foreground="{DynamicResource OnSurfaceBrush}"
+                                 FontSize="13"/>
+                </StackPanel>
+
+                <TextBlock Text="RESOLUTION"
+                           FontSize="10" FontWeight="Bold"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="64"/>
+                    </Grid.ColumnDefinitions>
+                    <Slider x:Name="DpiSlider"
+                            Minimum="72" Maximum="300" Value="150"
+                            TickFrequency="1" IsSnapToTickEnabled="True"
+                            ValueChanged="DpiSlider_ValueChanged"
+                            Margin="0,0,12,0"/>
+                    <TextBlock x:Name="DpiLabel"
+                               Grid.Column="1"
+                               Text="150 DPI"
+                               FontSize="13" FontWeight="SemiBold"
+                               Foreground="{DynamicResource OnSurfaceBrush}"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,4,0,12"/>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Cancel"
                     Style="{StaticResource OutlinedButton}"
-                    Width="96"
-                    Margin="0,0,8,0"
+                    Width="90" Margin="0,0,8,0"
                     IsCancel="True"
-                    Click="Cancel_Click" />
-            <Button Content="Convert…"
+                    Click="Cancel_Click"/>
+            <Button Content="Export…"
                     Style="{StaticResource FilledButton}"
-                    Width="110"
+                    Width="100"
                     IsDefault="True"
-                    Click="Convert_Click" />
+                    Click="Export_Click"/>
         </StackPanel>
 
     </StackPanel>

@@ -995,14 +995,24 @@ public sealed class PdfiumEditor : IPdfEditor
             ct.ThrowIfCancellationRequested();
             try
             {
+                // Try Word COM first (best quality, preserves formatting)
                 var temp = WordFromPdfConverter.ConvertToDocx(inputPath);
-                if (temp == null)
-                    return OperationResult.Fail(
-                        "Word could not open the PDF. Ensure Microsoft Word 2013 or later is installed.");
+                if (temp != null)
+                {
+                    File.Move(temp, outputPath, overwrite: true);
+                    _logger.LogInformation("PDF→DOCX (Word COM): {In} → {Out}", inputPath, outputPath);
+                    return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
+                }
 
-                File.Move(temp, outputPath, overwrite: true);
-                _logger.LogInformation("PDF→DOCX: {In} → {Out}", inputPath, outputPath);
-                return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
+                // Fallback: styled extraction with PdfPig → Open XML SDK
+                _logger.LogInformation("Word not installed — using pure .NET fallback for PDF→DOCX");
+                var docPages = ExtractStyledPagesWithPdfPig(inputPath);
+                DocxBuilder.Build(docPages, outputPath);
+
+                _logger.LogInformation("PDF→DOCX (pure .NET): {In} → {Out}", inputPath, outputPath);
+                return OperationResult.Ok(
+                    $"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}\n" +
+                    "(Text-only export — Microsoft Word was not found on this machine.)");
             }
             catch (Exception ex)
             {
@@ -1011,6 +1021,15 @@ public sealed class PdfiumEditor : IPdfEditor
                 return OperationResult.Fail($"Word conversion failed: {ex.Message}");
             }
         }, ct);
+    }
+
+    private static IReadOnlyList<DocPage> ExtractStyledPagesWithPdfPig(string pdfPath)
+    {
+        var result = new List<DocPage>();
+        using var doc = UglyToad.PdfPig.PdfDocument.Open(pdfPath);
+        foreach (var page in doc.GetPages())
+            result.Add(Export.PdfExporter.AnalyzePage(page));
+        return result;
     }
 
     private static IEnumerable<string> WrapLine(string line, XFont font, double maxWidth)

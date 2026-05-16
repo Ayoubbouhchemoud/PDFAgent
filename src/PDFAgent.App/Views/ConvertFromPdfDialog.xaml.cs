@@ -1,60 +1,54 @@
 using System.Windows;
+using PDFAgent.Core.Models;
 
 namespace PDFAgent.App.Views;
 
-public enum ConvertFromFormat { Images, Word, Text }
-
 public partial class ConvertFromPdfDialog : Window
 {
-    public ConvertFromFormat SelectedFormat    { get; private set; }
-    public bool              UseJpeg          { get; private set; }
-    public int               SelectedDpi      { get; private set; } = 150;
-    public bool              AllPages         { get; private set; } = true;
+    public ExportFormat SelectedFormat { get; private set; } = ExportFormat.Txt;
+    public int          SelectedDpi    { get; private set; } = 150;
+    public bool         AllPages       { get; private set; } = true;
 
     public ConvertFromPdfDialog(string fileName, int totalPages, int currentPage)
     {
         InitializeComponent();
-        var singlePage = totalPages == 1;
-        InfoLabel.Text = $"File: {fileName}  ·  {totalPages} page{(singlePage ? "" : "s")}  ·  current page: {currentPage}";
-        if (singlePage) RadioCurrentPage.IsEnabled = false;
-        UpdateDpiHint();
+        var multi = totalPages > 1;
+        InfoLabel.Text = $"{fileName}  ·  {totalPages} page{(multi ? "s" : "")}  ·  current page: {currentPage}";
+        if (!multi) RadioCurrentPage.IsEnabled = false;
     }
 
     private void Format_Changed(object sender, RoutedEventArgs e)
     {
-        if (ImageOptions == null) return;
-        var isImages = RadioImages.IsChecked == true;
-        ImageOptions.IsEnabled = isImages;
-        ImageOptions.Opacity   = isImages ? 1.0 : 0.4;
+        if (ImageOptionsPanel == null) return;
+        var showImages = RadioPng.IsChecked == true || RadioJpg.IsChecked == true || RadioSvg.IsChecked == true;
+        ImageOptionsPanel.Visibility = showImages ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void DpiSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (DpiLabel == null) return;
         DpiLabel.Text = $"{(int)DpiSlider.Value} DPI";
-        UpdateDpiHint();
     }
 
-    private void UpdateDpiHint()
+    private void Export_Click(object sender, RoutedEventArgs e)
     {
-        if (DpiHint == null) return;
-        DpiHint.Text = (int)DpiSlider.Value switch
-        {
-            <= 96  => "Screen quality — compact file, suitable for on-screen viewing.",
-            <= 150 => "Standard quality — good balance of size and clarity.",
-            <= 200 => "High quality — suitable for printing.",
-            _      => "Print quality — near-lossless, larger file.",
-        };
-    }
+        SelectedFormat = RadioTxt.IsChecked    == true ? ExportFormat.Txt
+                       : RadioHtml.IsChecked   == true ? ExportFormat.Html
+                       : RadioEpub.IsChecked   == true ? ExportFormat.Epub
+                       : RadioPng.IsChecked    == true ? ExportFormat.Png
+                       : RadioJpg.IsChecked    == true ? ExportFormat.Jpg
+                       : RadioSvg.IsChecked    == true ? ExportFormat.Svg
+                       : RadioPdf.IsChecked    == true ? ExportFormat.Pdf
+                       : RadioPdfA1.IsChecked  == true ? ExportFormat.PdfA1b
+                       : RadioPdfA2.IsChecked  == true ? ExportFormat.PdfA2b
+                       : RadioPdfA3.IsChecked  == true ? ExportFormat.PdfA3b
+                       : RadioSecure.IsChecked == true ? ExportFormat.SecurePdf
+                       : RadioDocx.IsChecked   == true ? ExportFormat.Docx
+                       : RadioPptx.IsChecked   == true ? ExportFormat.Pptx
+                       :                                 ExportFormat.Xlsx;
 
-    private void Convert_Click(object sender, RoutedEventArgs e)
-    {
-        SelectedFormat = RadioImages.IsChecked == true ? ConvertFromFormat.Images
-                       : RadioWord.IsChecked   == true ? ConvertFromFormat.Word
-                       :                                 ConvertFromFormat.Text;
-        UseJpeg   = RadioJpeg.IsChecked == true;
-        SelectedDpi = (int)DpiSlider.Value;
-        AllPages  = RadioAllPages.IsChecked == true;
+        SelectedDpi = (int)(DpiSlider?.Value ?? 150);
+        AllPages    = RadioAllPages?.IsChecked != false;
         DialogResult = true;
     }
 

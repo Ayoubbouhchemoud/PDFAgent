@@ -175,6 +175,64 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
+    public string? SaveHtmlFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "HTML file (*.html)|*.html|All files (*.*)|*.*",
+            Title = "Save HTML as…", FileName = defaultName, DefaultExt = ".html",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SaveEpubFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "EPUB e-book (*.epub)|*.epub|All files (*.*)|*.*",
+            Title = "Save EPUB as…", FileName = defaultName, DefaultExt = ".epub",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SaveSvgFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "SVG image (*.svg)|*.svg|All files (*.*)|*.*",
+            Title = "Save SVG as…", FileName = defaultName, DefaultExt = ".svg",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SavePptxFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PowerPoint presentation (*.pptx)|*.pptx|All files (*.*)|*.*",
+            Title = "Save PowerPoint as…", FileName = defaultName, DefaultExt = ".pptx",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SaveXlsxFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Excel workbook (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Title = "Save Excel workbook as…", FileName = defaultName, DefaultExt = ".xlsx",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public SecurePdfDialogResult? ShowSecurePdfDialog()
+    {
+        var dialog = new Views.SecurePdfDialog { Owner = Application.Current.MainWindow };
+        return dialog.ShowDialog() == true
+            ? new SecurePdfDialogResult(dialog.UserPassword, dialog.OwnerPassword)
+            : null;
+    }
+
     public IReadOnlyList<string> OpenForConversion()
     {
         var dialog = new OpenFileDialog

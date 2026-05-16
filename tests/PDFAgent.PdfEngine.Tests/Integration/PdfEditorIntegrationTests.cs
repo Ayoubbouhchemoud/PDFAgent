@@ -91,7 +91,8 @@ public sealed class PdfEditorIntegrationTests : IDisposable
         var editor = CreateEditor();
         var outDir = Path.Combine(_testDir, "split_output");
 
-        var result = await editor.SplitAsync(_pdf3Page, outDir, SplitMode.SplitAll);
+        var result = await editor.SplitAsync(_pdf3Page,
+            new PDFAgent.Core.Interfaces.SplitOptions { Mode = SplitMode.SplitAll, OutputDir = outDir, BaseName = "page" });
 
         result.IsSuccess.Should().BeTrue(because: result.Message);
 
@@ -111,7 +112,8 @@ public sealed class PdfEditorIntegrationTests : IDisposable
         var editor = CreateEditor();
         var outDir = Path.Combine(_testDir, "split_names");
 
-        await editor.SplitAsync(_pdf3Page, outDir, SplitMode.SplitAll);
+        await editor.SplitAsync(_pdf3Page,
+            new PDFAgent.Core.Interfaces.SplitOptions { Mode = SplitMode.SplitAll, OutputDir = outDir, BaseName = "page" });
 
         var names = Directory.GetFiles(outDir, "*.pdf")
             .Select(Path.GetFileNameWithoutExtension)

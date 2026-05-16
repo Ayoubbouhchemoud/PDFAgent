@@ -9,6 +9,7 @@ using PDFAgent.Core.Services;
 using PDFAgent.Core.Configuration;
 using PDFAgent.Core.Interfaces;
 using PDFAgent.PdfEngine;
+using PDFAgent.PdfEngine.Export;
 using PDFAgent.PdfEngine.Ocr;
 using PDFAgent.PdfEngine.Redaction;
 using Serilog;
@@ -64,6 +65,7 @@ public partial class App : Application
         // (IPdfEngine holds document state; others are stateless but share Singleton lifetime)
         services.AddSingleton<IPdfEngine, PdfiumEngine>();
         services.AddSingleton<IPdfEditor, PdfiumEditor>();
+        services.AddSingleton<IPdfExporter, PdfExporter>();
         services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
         services.AddSingleton<IRedactionEngine, PdfRedactionEngine>();
 
