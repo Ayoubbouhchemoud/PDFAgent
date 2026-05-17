@@ -53,29 +53,40 @@ public sealed class PdfToHtmlConverter : IPdfExporter
             ? ["py", "python", "python3"]
             : ["python3", "python"];
 
+        string? lastRealError = null;
+
         foreach (var exe in candidates)
         {
             try
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName              = exe,
-                    Arguments             = $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"",
-                    CreateNoWindow        = true,
-                    UseShellExecute       = false,
-                    RedirectStandardError = true,
+                    FileName               = exe,
+                    Arguments              = $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"",
+                    CreateNoWindow         = true,
+                    UseShellExecute        = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
                 };
 
                 using var proc = Process.Start(psi);
                 if (proc is null) continue;
 
-                bool exited = proc.WaitForExit(60_000); // 60-second hard timeout
+                // Read both streams before WaitForExit to avoid pipe-buffer deadlocks.
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                var stderrTask = proc.StandardError.ReadToEndAsync();
+
+                bool exited = proc.WaitForExit(60_000);
                 ct.ThrowIfCancellationRequested();
+
+                string stdout = stdoutTask.Result.Trim();
+                string stderr = stderrTask.Result.Trim();
+                string combined = (stdout + "\n" + stderr).Trim();
 
                 if (!exited)
                 {
                     proc.Kill();
-                    continue; // try next interpreter
+                    continue;
                 }
 
                 if (proc.ExitCode == 0 && File.Exists(outputPath))
@@ -84,22 +95,106 @@ public sealed class PdfToHtmlConverter : IPdfExporter
                     return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
                 }
 
-                string stderr = proc.StandardError.ReadToEnd().Trim();
-                _logger.LogError("Python script failed (exit {Code}): {Err}", proc.ExitCode, stderr);
-                return OperationResult.Fail(
-                    string.IsNullOrEmpty(stderr)
-                        ? $"Python exited with code {proc.ExitCode}."
-                        : stderr);
+                // Windows Store Python alias exits non-zero and outputs a "not found" hint.
+                // Treat it as "interpreter not installed" and try the next candidate.
+                if (IsStoreAlias(combined))
+                {
+                    _logger.LogDebug("Interpreter '{Exe}' is a Windows Store alias — skipping.", exe);
+                    continue;
+                }
+
+                // Real Python error (bad script, missing pdfplumber, etc.) — stop here.
+                _logger.LogError("Python script failed (exit {Code}): {Err}", proc.ExitCode, combined);
+                lastRealError = string.IsNullOrEmpty(combined)
+                    ? $"Python exited with code {proc.ExitCode}."
+                    : combined;
+                return OperationResult.Fail(lastRealError);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // This interpreter is not on PATH — try the next candidate.
+                // Interpreter not on PATH — try the next candidate.
                 _logger.LogDebug("Interpreter '{Exe}' not found: {Msg}", exe, ex.Message);
             }
         }
 
+        // Last resort on Windows: run python3 inside WSL (if installed).
+        if (OperatingSystem.IsWindows())
+        {
+            var wslResult = TryWsl(scriptPath, inputPath, outputPath, ct);
+            if (wslResult is not null) return wslResult;
+        }
+
         return OperationResult.Fail(
             "Python 3 is not installed or not on PATH.\n" +
-            "Install Python 3 (python.org) and run: pip install pdfplumber");
+            "Install Python 3 from python.org and run: pip install pdfplumber\n" +
+            "Alternatively, install WSL and run: pip install pdfplumber inside it.");
     }
+
+    private OperationResult? TryWsl(
+        string scriptPath, string inputPath, string outputPath, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName               = "wsl",
+                Arguments              = $"python3 \"{ToWslPath(scriptPath)}\" \"{ToWslPath(inputPath)}\" \"{ToWslPath(outputPath)}\"",
+                CreateNoWindow         = true,
+                UseShellExecute        = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return null;
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            bool exited = proc.WaitForExit(60_000);
+            ct.ThrowIfCancellationRequested();
+
+            string stdout  = stdoutTask.Result.Trim();
+            string stderr  = stderrTask.Result.Trim();
+            string combined = (stdout + "\n" + stderr).Trim();
+
+            if (!exited) { proc.Kill(); return null; }
+
+            if (proc.ExitCode == 0 && File.Exists(outputPath))
+            {
+                _logger.LogInformation("HTML export via WSL complete: {Path}", outputPath);
+                return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
+            }
+
+            if (!string.IsNullOrEmpty(combined))
+            {
+                _logger.LogError("WSL python3 failed (exit {Code}): {Err}", proc.ExitCode, combined);
+                return OperationResult.Fail(combined);
+            }
+
+            return null; // WSL not available or python3 not in WSL
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug("WSL not available: {Msg}", ex.Message);
+            return null;
+        }
+    }
+
+    private static string ToWslPath(string windowsPath)
+    {
+        if (windowsPath.Length >= 2 && windowsPath[1] == ':')
+        {
+            char drive = char.ToLower(windowsPath[0]);
+            string rest = windowsPath[2..].Replace('\\', '/');
+            return $"/mnt/{drive}{rest}";
+        }
+        return windowsPath.Replace('\\', '/');
+    }
+
+    private static bool IsStoreAlias(string output) =>
+        output.Contains("Microsoft Store", StringComparison.OrdinalIgnoreCase) ||
+        output.Contains("nicht gefunden", StringComparison.OrdinalIgnoreCase) ||
+        output.Contains("was not found",  StringComparison.OrdinalIgnoreCase) ||
+        output.Contains("App Installer",  StringComparison.OrdinalIgnoreCase);
 }

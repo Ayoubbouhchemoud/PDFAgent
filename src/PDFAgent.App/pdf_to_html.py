@@ -1,19 +1,25 @@
 """
-pdf_to_html.py — Step 3: Heading detection, empty-row filtering, orphan cleanup.
+pdf_to_html.py — Faithful, position-preserving PDF-to-HTML converter.
 
-Fixes vs Step 2:
-  - Median size computed from ALL words before table exclusion (true body baseline)
-  - Per-page median passed into _build_body so heading thresholds are consistent
-  - Empty table rows (all cells blank) filtered out of <table> output
-  - Short orphan <p> elements (< 3 visible chars) suppressed
+Strategy
+--------
+  • One <div class="pdf-page"> per page, sized in PDF-point units (1 pt = 1 CSS px).
+  • Every word is placed via position:absolute at its original PDF coordinate.
+  • Bold / italic is inferred from the fontname string.
+  • Embedded images are extracted and inlined as base64 data-URIs (<img>).
+  • The real invoice/data table is detected by analysing column structure in
+    section-background rectangles.  pdfplumber.find_tables() is NOT used —
+    it misclassifies coloured background boxes as table cells and turns the
+    entire page into a single table.
+  • No semantic headings / paragraphs / bullet inference — the converter
+    preserves what is visually in the PDF, not a reflowed reading order.
 """
 
 from __future__ import annotations
 
+import base64
 import re
-import statistics
-from dataclasses import dataclass, field
-from html import escape
+from html import escape as _esc
 from pathlib import Path
 
 import pdfplumber
@@ -23,237 +29,293 @@ import pdfplumber
 # Tuning constants
 # ---------------------------------------------------------------------------
 
-_ROW_TOL          = 4.0   # pt: vertical tolerance for grouping words into one row
-_COL_GAP_RATIO    = 0.12  # fraction of page width that qualifies as a column gap
-_PARA_MERGE_RATIO = 1.8   # gap > ratio × line_height → new paragraph
-_TABLE_MIN_ROWS   = 2     # minimum rows to treat a detected region as a table
-_ORPHAN_MIN_CHARS = 3     # <p> shorter than this (visible chars) is suppressed
-
-_BULLET_RE = re.compile(
-    r"""^
-    (?:
-        [•·▪▸▶‒–—◦○●■□◆◇]    # unicode bullets
-        | [-*]\s               # ASCII dash/star + space
-        | (?:\d+|[a-zA-Z]|[ivxIVX]+)[.)]\s   # 1. a. iv.
-        | \(\d+\)\s            # (1) style
-    )""",
-    re.VERBOSE,
-)
-
-
-# ---------------------------------------------------------------------------
-# Internal data types
-# ---------------------------------------------------------------------------
-
-@dataclass
-class _Row:
-    text:      str
-    size:      float   # average font size
-    y_top:     float   # distance from top of page (increases downward)
-    y_bot:     float
-    x_left:    float
-    x_right:   float
-    is_bullet: bool
-    median_sz: float = field(default=12.0)  # per-page median at time of creation
-
-
-@dataclass
-class _Table:
-    rows:  list[list[str | None]]
-    y_top: float
+_LINE_TOL       = 2.5   # pt – Y-tolerance for grouping words onto one line
+_MERGE_GAP      = 15.0  # pt – max whitespace gap to merge adjacent same-style words
+_COL_DETECT_GAP = 5.0   # pt – min whitespace gap (x0_next − x1_prev) between header columns
+_MIN_TABLE_COLS = 3     # need ≥ this many columns to treat a section as a table
+_DIGIT_RE       = re.compile(r'\d')   # presence of a digit → data row, not header
 
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
 
-def _strip_bullet(text: str) -> str:
-    m = _BULLET_RE.match(text.lstrip())
-    return text.lstrip()[m.end():] if m else text
+def _is_bold(fname: str) -> bool:
+    return "Bold" in fname or "bold" in fname
 
 
-def _classify_size(size: float, median: float) -> str:
-    """Map font-size ratio to semantic tag."""
-    if median <= 0:
-        return "p"
-    r = size / median
-    if r >= 2.0:  return "h1"
-    if r >= 1.6:  return "h2"
-    if r >= 1.35: return "h3"
-    return "p"
+def _is_italic(fname: str) -> bool:
+    return "Italic" in fname or "italic" in fname or "Oblique" in fname
 
 
-def _words_to_rows(words: list[dict]) -> list[_Row]:
-    """
-    Group pdfplumber word dicts into horizontal text rows using a 4-pt vertical
-    tolerance.  median_sz on the returned rows is set to 12.0 as a placeholder;
-    callers overwrite it after computing the page median.
-    """
+def _group_into_lines(words: list[dict]) -> list[list[dict]]:
+    """Group word dicts into horizontal lines by similar top-Y (±_LINE_TOL pt)."""
     if not words:
         return []
-
     buckets: list[tuple[float, list[dict]]] = []
-    for w in sorted(words, key=lambda x: x["top"]):
+    for w in sorted(words, key=lambda w: (w["top"], w["x0"])):
         y = w["top"]
-        for bkt in buckets:
-            if abs(bkt[0] - y) <= _ROW_TOL:
-                bkt[1].append(w)
+        for bk in buckets:
+            if abs(bk[0] - y) <= _LINE_TOL:
+                bk[1].append(w)
                 break
         else:
             buckets.append((y, [w]))
+    return [sorted(bk[1], key=lambda w: w["x0"]) for bk in buckets]
 
-    rows: list[_Row] = []
-    for _, bkt_words in buckets:
-        bkt_words.sort(key=lambda w: w["x0"])
-        text = " ".join(w["text"] for w in bkt_words).strip()
-        if not text:
+
+def _detect_col_starts(header_line: list[dict]) -> list[float]:
+    """
+    Return the x0 of each column start, inferred from whitespace gaps in the
+    first (header) line of the table.  A new column begins when
+    x0_next − x1_prev ≥ _COL_DETECT_GAP.
+    """
+    if not header_line:
+        return []
+    starts     = [header_line[0]["x0"]]
+    running_x1 = header_line[0]["x1"]
+    for w in header_line[1:]:
+        if w["x0"] - running_x1 >= _COL_DETECT_GAP:
+            starts.append(w["x0"])
+        if w["x1"] > running_x1:
+            running_x1 = w["x1"]
+    return starts
+
+
+def _assign_col(x0: float, col_starts: list[float]) -> int:
+    """Return the column index for a word at x0 (rightmost col_start ≤ x0)."""
+    col = 0
+    for i, cs in enumerate(col_starts):
+        if x0 >= cs - 2:   # 2 pt tolerance
+            col = i
+    return col
+
+
+def _merge_into_runs(line: list[dict]) -> list[dict]:
+    """
+    Merge consecutive same-style words within a line into text runs.
+    A run extends as long as bold/italic/size match AND whitespace gap < _MERGE_GAP.
+    Returns a list of 'run' dicts with keys: text, x0, x1, top, fontname, size.
+    """
+    if not line:
+        return []
+    runs = [dict(line[0])]
+    for w in line[1:]:
+        p = runs[-1]
+        gap        = w["x0"] - p.get("x1", p["x0"])
+        same_bold  = _is_bold(w.get("fontname", "")) == _is_bold(p.get("fontname", ""))
+        same_ital  = _is_italic(w.get("fontname", "")) == _is_italic(p.get("fontname", ""))
+        same_size  = abs(w.get("size", 12) - p.get("size", 12)) < 0.5
+        if same_bold and same_ital and same_size and gap < _MERGE_GAP:
+            p["text"] = p["text"] + " " + w["text"]
+            p["x1"]   = w["x1"]
+        else:
+            runs.append(dict(w))
+    return runs
+
+
+# ---------------------------------------------------------------------------
+# Section-rect detection
+# ---------------------------------------------------------------------------
+
+def _section_rects(page) -> list[tuple[float, float]]:
+    """
+    Return (y_top, y_bot) of content-section background rectangles.
+    Full-page-width backgrounds and tiny decorations are excluded.
+    """
+    pw = float(page.width)
+    result: set[tuple[float, float]] = set()
+    for r in page.rects:
+        w = r["x1"] - r["x0"]
+        h = r["bottom"] - r["top"]
+        if w > pw * 0.95:   # full-page background
             continue
-        sizes = [w["size"] for w in bkt_words if w.get("size", 0) >= 1]
-        rows.append(_Row(
-            text      = text,
-            size      = statistics.mean(sizes) if sizes else 12.0,
-            y_top     = min(w["top"]    for w in bkt_words),
-            y_bot     = max(w["bottom"] for w in bkt_words),
-            x_left    = bkt_words[0]["x0"],
-            x_right   = bkt_words[-1]["x1"],
-            is_bullet = bool(_BULLET_RE.match(text)),
-        ))
-    return rows
-
-
-def _point_in_bbox(cx: float, cy: float, bbox: tuple) -> bool:
-    x0, top, x1, bot = bbox
-    return x0 <= cx <= x1 and top <= cy <= bot
+        if h < 15 or w < 50:  # decoration
+            continue
+        result.add((r["top"], r["bottom"]))
+    return sorted(result)
 
 
 # ---------------------------------------------------------------------------
-# Column detection
+# Image extraction
 # ---------------------------------------------------------------------------
 
-def _detect_column_split(words: list[dict], page_width: float) -> float | None:
+def _img_html(img: dict) -> str | None:
     """
-    Return the x-midpoint of the column gutter for a 2-column page, or None.
+    Build an absolutely-positioned <img> tag for a pdfplumber image dict.
+    Supports DCTDecode (JPEG) natively; attempts PIL for other formats.
+    Returns None if the image cannot be read.
     """
-    if len(words) < 8 or page_width <= 0:
+    stream = img.get("stream")
+    if stream is None:
+        return None
+    try:
+        raw = stream.get_data()
+    except Exception:
         return None
 
-    centres = sorted((w["x0"] + w["x1"]) / 2 for w in words)
-    lo, hi  = page_width * 0.20, page_width * 0.80
-    min_gap = page_width * _COL_GAP_RATIO
+    filt = str(stream.attrs.get("Filter", ""))
+    if "DCT" in filt or "JPEG" in filt:
+        mime = "image/jpeg"
+    else:
+        try:
+            from PIL import Image
+            import io as _io
+            cs    = str(img.get("colorspace", ""))
+            w_px  = int(img.get("width",  0))
+            h_px  = int(img.get("height", 0))
+            if w_px and h_px:
+                mode = "L" if "Gray" in cs else "RGB"
+                pil  = Image.frombytes(mode, (w_px, h_px), raw)
+                buf  = _io.BytesIO()
+                pil.save(buf, format="PNG")
+                raw  = buf.getvalue()
+                mime = "image/png"
+            else:
+                return None
+        except Exception:
+            return None
 
-    best_mid, best_gap = None, 0.0
-    for i in range(1, len(centres)):
-        gap = centres[i] - centres[i - 1]
-        mid = (centres[i - 1] + centres[i]) / 2
-        if lo <= mid <= hi and gap >= min_gap and gap > best_gap:
-            best_gap, best_mid = gap, mid
+    b64    = base64.b64encode(raw).decode("ascii")
+    x0     = float(img["x0"])
+    top    = float(img["top"])
+    width  = float(img["x1"]) - x0
+    height = float(img["bottom"]) - top
 
-    return best_mid
-
-
-def _split_words_by_column(
-    words: list[dict], split_x: float
-) -> tuple[list[dict], list[dict]]:
-    """Partition individual word dicts into left/right columns by x-centre."""
-    left, right = [], []
-    for w in words:
-        mid = (w["x0"] + w["x1"]) / 2
-        (left if mid < split_x else right).append(w)
-    return left, right
+    return (
+        f'<img src="data:{mime};base64,{b64}"'
+        f' style="position:absolute;left:{x0:.1f}px;top:{top:.1f}px;'
+        f'width:{width:.1f}px;height:{height:.1f}px;object-fit:contain;"'
+        f' alt="embedded image"/>'
+    )
 
 
 # ---------------------------------------------------------------------------
-# Paragraph merging
+# Positioned text span
 # ---------------------------------------------------------------------------
 
-def _merge_paragraphs(rows: list[_Row], median_size: float) -> list[_Row]:
+def _span_html(run: dict) -> str:
+    """Build a single absolutely-positioned <span> for a text run."""
+    fname  = run.get("fontname", "")
+    size   = float(run.get("size", 9.8))
+    x0     = float(run["x0"])
+    top    = float(run["top"])
+
+    styles = [
+        "position:absolute",
+        f"left:{x0:.1f}px",
+        f"top:{top:.1f}px",
+        f"font-size:{size:.2f}px",
+    ]
+    if _is_bold(fname):
+        styles.append("font-weight:bold")
+    if _is_italic(fname):
+        styles.append("font-style:italic")
+
+    return f'<span style="{"; ".join(styles)}">{_esc(run["text"])}</span>'
+
+
+# ---------------------------------------------------------------------------
+# Table rendering
+# ---------------------------------------------------------------------------
+
+def _table_html(words: list[dict], col_starts: list[float], y_top: float) -> str:
     """
-    Merge consecutive body-text rows separated by less than
-    _PARA_MERGE_RATIO × line_height into a single _Row.
-    Headings and bullet items are always kept separate.
-    The median_sz field on every output row is set to median_size.
+    Convert the words in a detected table region into a positioned <table>.
+
+    Header rows   — consecutive lines at the top of the table whose col-0
+                    text contains no digits (column labels, not data).
+    Data rows     — lines whose col-0 text contains a digit (e.g., a date),
+                    plus any subsequent continuation lines with no col-0 text.
     """
-    if not rows:
-        return []
-
-    result: list[_Row] = []
-    buf: list[_Row] = []
-
-    def flush() -> None:
-        if not buf:
-            return
-        if len(buf) == 1:
-            r = buf[0]
-            r.median_sz = median_size
-            result.append(r)
-        else:
-            result.append(_Row(
-                text      = " ".join(r.text for r in buf),
-                size      = statistics.mean(r.size for r in buf),
-                y_top     = buf[0].y_top,
-                y_bot     = buf[-1].y_bot,
-                x_left    = min(r.x_left  for r in buf),
-                x_right   = max(r.x_right for r in buf),
-                is_bullet = False,
-                median_sz = median_size,
-            ))
-        buf.clear()
-
-    for row in rows:
-        tag = _classify_size(row.size, median_size)
-
-        if tag != "p" or row.is_bullet:
-            flush()
-            row.median_sz = median_size
-            result.append(row)
-            continue
-
-        if buf:
-            prev   = buf[-1]
-            line_h = max(prev.y_bot - prev.y_top, 4.0)
-            gap    = row.y_top - prev.y_bot
-            if gap > line_h * _PARA_MERGE_RATIO:
-                flush()
-
-        buf.append(row)
-
-    flush()
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Table → HTML
-# ---------------------------------------------------------------------------
-
-def _table_html(table_rows: list[list[str | None]]) -> str:
-    if not table_rows:
+    lines = _group_into_lines(words)
+    if not lines:
         return ""
 
-    def cell(v: str | None) -> str:
-        return escape((v or "").strip())
+    n = len(col_starts)
 
-    def _row_is_empty(row: list[str | None]) -> bool:
-        return all(not (c or "").strip() for c in row)
+    # ── Separate header lines from data lines ─────────────────────────────
+    header_lines: list[list[dict]] = []
+    data_lines:   list[list[dict]] = []
+    in_header = True
 
-    # Drop rows where every cell is blank (unfilled form fields)
-    non_empty = [r for r in table_rows if not _row_is_empty(r)]
-    if len(non_empty) < _TABLE_MIN_ROWS:
+    for line in lines:
+        col0_words = [w for w in line if _assign_col(w["x0"], col_starts) == 0]
+        col0_text  = " ".join(w["text"] for w in col0_words)
+        has_col0   = bool(col0_words)
+
+        if in_header:
+            if has_col0 and _DIGIT_RE.search(col0_text):
+                in_header = False    # first data row found
+                data_lines.append(line)
+            else:
+                header_lines.append(line)
+        else:
+            data_lines.append(line)
+
+    # ── Build cell text for a group of lines ─────────────────────────────
+    # Use individual words (NOT merged runs) so words that span narrow column
+    # boundaries are never mis-assigned to the wrong column.
+    def cells_from(row_lines: list[list[dict]]) -> list[str]:
+        cols: list[list[str]] = [[] for _ in range(n)]
+        for ln in row_lines:
+            for w in ln:
+                ci   = _assign_col(w["x0"], col_starts)
+                text = _esc(w["text"])
+                if _is_bold(w.get("fontname", "")):
+                    text = f"<strong>{text}</strong>"
+                cols[ci].append(text)
+        return [" ".join(c) for c in cols]
+
+    # ── Group data lines into logical rows ────────────────────────────────
+    # A new logical row starts on a line that has col-0 content.
+    logical_data_rows: list[list[list[dict]]] = []
+    cur: list[list[dict]] = []
+
+    for line in data_lines:
+        col0_words = [w for w in line if _assign_col(w["x0"], col_starts) == 0]
+        has_col0   = bool(col0_words)
+        if has_col0 and cur:
+            logical_data_rows.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        logical_data_rows.append(cur)
+
+    if not header_lines and not logical_data_rows:
         return ""
 
-    parts = ["<table>"]
-    for ri, row in enumerate(non_empty):
-        if ri == 0:
-            parts.append("<thead><tr>")
-            parts += [f"<th>{cell(c)}</th>" for c in row]
-            parts.append("</tr></thead>")
-            if len(non_empty) > 1:
-                parts.append("<tbody>")
-        else:
+    # ── Column widths ─────────────────────────────────────────────────────
+    col_widths = [col_starts[i + 1] - col_starts[i] for i in range(n - 1)]
+    col_widths.append(50.0)   # last column gets a minimum width
+
+    # ── Assemble HTML ─────────────────────────────────────────────────────
+    tbl_left = col_starts[0]
+    parts: list[str] = [
+        f'<table style="position:absolute;left:{tbl_left:.1f}px;top:{y_top:.1f}px;'
+        f'border-collapse:collapse;font-size:9.8px;font-family:inherit;">'
+    ]
+
+    if header_lines:
+        parts.append("<thead><tr>")
+        for ci, txt in enumerate(cells_from(header_lines)):
+            w_style = f"width:{col_widths[ci]:.1f}px"
+            parts.append(
+                f'<th style="vertical-align:top;padding:1px 4px;{w_style}">{txt}</th>'
+            )
+        parts.append("</tr></thead>")
+
+    if logical_data_rows:
+        parts.append("<tbody>")
+        for row_lines in logical_data_rows:
             parts.append("<tr>")
-            parts += [f"<td>{cell(c)}</td>" for c in row]
+            for ci, txt in enumerate(cells_from(row_lines)):
+                parts.append(
+                    f'<td style="vertical-align:top;padding:1px 4px">{txt}</td>'
+                )
             parts.append("</tr>")
-    if len(non_empty) > 1:
         parts.append("</tbody>")
+
     parts.append("</table>")
     return "\n".join(parts)
 
@@ -262,123 +324,65 @@ def _table_html(table_rows: list[list[str | None]]) -> str:
 # Per-page processing
 # ---------------------------------------------------------------------------
 
-def _process_page(page) -> list[tuple[float, _Row | _Table]]:
-    """
-    Return (sort_y, item) pairs for all semantic items on the page.
-
-    Key fix: median_sz is computed from ALL words on the page (before table
-    exclusion) so it reflects the true body-text baseline, not a biased sample.
-    """
+def _process_page(page) -> str:
     pw = float(page.width)
     ph = float(page.height)
 
-    # ── 1. Extract ALL words first (needed for unbiased median) ─────────────
-    all_words = page.extract_words(extra_attrs=["size"])
-    all_sizes = [w["size"] for w in all_words if w.get("size", 0) >= 4]
-    median_sz = statistics.median(all_sizes) if all_sizes else 12.0
+    all_words = page.extract_words(extra_attrs=["size", "fontname"])
+    sections  = _section_rects(page)
 
-    # ── 2. Detect and extract tables ─────────────────────────────────────────
-    tables:     list[_Table] = []
-    tbl_bboxes: list[tuple]  = []
+    # ── Detect table regions ──────────────────────────────────────────────
+    # Each section-background rect is a candidate; it is confirmed as a table
+    # if its first word-line has ≥ _MIN_TABLE_COLS distinct column starts.
+    table_regions: list[tuple[float, float, list[float]]] = []
 
-    for tbl in page.find_tables():
-        data = tbl.extract()
-        non_empty = [r for r in (data or []) if any(c and c.strip() for c in r)]
-        if len(non_empty) >= _TABLE_MIN_ROWS:
-            tbl_bboxes.append(tbl.bbox)
-            tables.append(_Table(rows=data, y_top=tbl.bbox[1]))
+    for (y_top, y_bot) in sections:
+        band = [w for w in all_words if y_top - 1 <= w["top"] <= y_bot + 1]
+        if not band:
+            continue
+        lines = _group_into_lines(band)
+        if not lines:
+            continue
+        col_starts = _detect_col_starts(lines[0])
+        if len(col_starts) >= _MIN_TABLE_COLS:
+            table_regions.append((y_top, y_bot, col_starts))
 
-    # ── 3. Filter words that fall inside table regions ───────────────────────
-    words = all_words
-    if tbl_bboxes:
-        words = [
-            w for w in words
-            if not any(
-                _point_in_bbox(
-                    (w["x0"] + w["x1"]) / 2,
-                    (w["top"] + w["bottom"]) / 2,
-                    bb,
-                )
-                for bb in tbl_bboxes
-            )
-        ]
+    def table_region_for(w: dict) -> tuple | None:
+        for (yt, yb, cs) in table_regions:
+            if yt - 1 <= w["top"] <= yb + 1:
+                return (yt, yb, cs)
+        return None
 
-    # ── 4. Column detection on non-table words ───────────────────────────────
-    split_x = _detect_column_split(words, pw)
+    parts: list[str] = []
 
-    if split_x:
-        left_words, right_words = _split_words_by_column(words, split_x)
-        left_raw  = _words_to_rows(left_words)
-        right_raw = _words_to_rows(right_words)
+    # ── Images ───────────────────────────────────────────────────────────
+    for img in page.images:
+        h = _img_html(img)
+        if h:
+            parts.append(h)
 
-        left  = _merge_paragraphs(sorted(left_raw,  key=lambda r: r.y_top), median_sz)
-        right = _merge_paragraphs(sorted(right_raw, key=lambda r: r.y_top), median_sz)
+    # ── Tables ───────────────────────────────────────────────────────────
+    rendered: set[tuple[float, float]] = set()
+    for (yt, yb, cs) in table_regions:
+        if (yt, yb) in rendered:
+            continue
+        tbl_words = [w for w in all_words if yt - 1 <= w["top"] <= yb + 1]
+        parts.append(_table_html(tbl_words, cs, yt))
+        rendered.add((yt, yb))
 
-        text_items: list[tuple[float, _Row]] = (
-            [(r.y_top,      r) for r in left] +
-            [(ph + r.y_top, r) for r in right]
-        )
-    else:
-        raw    = _words_to_rows(words)
-        merged = _merge_paragraphs(sorted(raw, key=lambda r: r.y_top), median_sz)
-        text_items = [(r.y_top, r) for r in merged]
+    # ── Positioned text spans ─────────────────────────────────────────────
+    non_table = [w for w in all_words if table_region_for(w) is None]
+    for line in _group_into_lines(non_table):
+        for run in _merge_into_runs(line):
+            parts.append(_span_html(run))
 
-    # ── 5. Interleave tables and text, sorted by y ───────────────────────────
-    all_items: list[tuple[float, _Row | _Table]] = (
-        [(t.y_top, t) for t in tables] + text_items
+    inner = "\n".join(p for p in parts if p)
+    return (
+        f'<div class="pdf-page" '
+        f'style="width:{pw:.0f}px;height:{ph:.0f}px;">\n'
+        f'{inner}\n'
+        f'</div>'
     )
-    return sorted(all_items, key=lambda x: x[0])
-
-
-# ---------------------------------------------------------------------------
-# HTML body assembly
-# ---------------------------------------------------------------------------
-
-def _build_body(
-    page_items: list[tuple[float, _Row | _Table]],
-) -> str:
-    """
-    Emit HTML for all items.  Each _Row carries its own median_sz so heading
-    classification uses the per-page baseline, not a global average.
-    """
-    parts:    list[str] = []
-    list_buf: list[str] = []
-
-    def flush_list() -> None:
-        if list_buf:
-            lis = "".join(f"<li>{escape(t)}</li>" for t in list_buf)
-            parts.append(f"<ul>{lis}</ul>")
-            list_buf.clear()
-
-    for _, item in page_items:
-
-        if isinstance(item, _Table):
-            flush_list()
-            html = _table_html(item.rows)
-            if html:
-                parts.append(html)
-            continue
-
-        row: _Row = item
-        text = row.text.strip()
-        if not text:
-            continue
-
-        if row.is_bullet:
-            list_buf.append(_strip_bullet(text))
-            continue
-
-        flush_list()
-        tag = _classify_size(row.size, row.median_sz)
-
-        # Suppress orphan body-text fragments (page numbers, cut-off words)
-        if tag == "p" and len(text) < _ORPHAN_MIN_CHARS:
-            continue
-
-        parts.append(f"<{tag}>{escape(text)}</{tag}>")
-
-    flush_list()
-    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -386,40 +390,43 @@ def _build_body(
 # ---------------------------------------------------------------------------
 
 _CSS = """\
-    body {
-      font-family: Georgia, serif;
-      font-size: 1rem;
-      line-height: 1.6;
-      max-width: 780px;
-      margin: 2rem auto;
-      padding: 0 1rem;
-      color: #111;
-    }
-    h1 { font-size: 2rem;   margin: 1.2rem 0 0.4rem; }
-    h2 { font-size: 1.5rem; margin: 1rem 0 0.35rem;  }
-    h3 { font-size: 1.2rem; margin: 0.8rem 0 0.3rem; }
-    p  { margin: 0.5rem 0; }
-    ul { margin: 0.5rem 0 0.5rem 2rem; padding: 0; list-style: disc; }
-    li { margin: 0.25rem 0; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
-    th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
-    th { background: #f0f0f0; font-weight: bold; }"""
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #888; }
+  .pdf-page {
+    position: relative;
+    background: white;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    margin: 20px auto;
+    font-family: 'Open Sans', Arial, sans-serif;
+  }
+  .pdf-page span {
+    position: absolute;
+    white-space: nowrap;
+    line-height: 1;
+    color: #000;
+  }
+  table {
+    border-collapse: collapse;
+    font-family: 'Open Sans', Arial, sans-serif;
+  }
+  th { font-weight: bold; text-align: left; }
+  td { text-align: left; }
+  img { display: block; }"""
 
 
 def _wrap(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html>\n"
-        '<html lang="en">\n'
+        '<html lang="de">\n'
         "<head>\n"
         '  <meta charset="utf-8"/>\n'
         '  <meta name="viewport" content="width=device-width,initial-scale=1"/>\n'
-        f"  <title>{escape(title)}</title>\n"
+        f"  <title>{_esc(title)}</title>\n"
         f"  <style>\n{_CSS}\n  </style>\n"
         "</head>\n"
         "<body>\n"
-        "<article>\n"
         f"{body}\n"
-        "</article>\n"
         "</body>\n"
         "</html>"
     )
@@ -430,36 +437,19 @@ def _wrap(title: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 
 def convert(pdf_path: str | Path, title: str | None = None) -> str:
-    """
-    Convert a PDF to a fluid semantic HTML5 document.
-
-    Handles:
-      - Tables     → <table><thead><tbody><tr><th>/<td>  (empty rows suppressed)
-      - 2-column   → left-column-first reading order
-      - Wrapped    → merged into single <p>
-      - Headings   → h1/h2/h3 by per-page font-size ratio
-      - Bullets    → <ul><li>
-      - Orphans    → very short <p> fragments suppressed
-      - No <img>   → text-only, zero image fallbacks
-    """
+    """Convert a PDF to faithful position-preserving HTML5."""
     pdf_path  = Path(pdf_path)
     doc_title = title or pdf_path.stem
 
-    all_items: list[tuple[float, _Row | _Table]] = []
-    y_offset = 0.0
-
+    page_htmls: list[str] = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
-            ph    = float(page.height)
-            items = _process_page(page)
-            for y, item in items:
-                all_items.append((y_offset + y, item))
-            y_offset += ph * 2
+            page_htmls.append(_process_page(page))
 
-    if not all_items:
-        return _wrap(doc_title, "<p>No text content found in this document.</p>")
+    body = "\n".join(page_htmls)
+    if not body.strip():
+        body = '<div class="pdf-page"><p>No content found.</p></div>'
 
-    body = _build_body(all_items)
     return _wrap(doc_title, body)
 
 

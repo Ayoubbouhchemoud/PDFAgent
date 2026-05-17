@@ -21,36 +21,13 @@ public sealed class PdfiumEditor : IPdfEditor
     {
         return await Task.Run(() =>
         {
-            var tempFiles = new List<string>();
             try
             {
-                // Resolve Word documents to temporary PDFs first.
-                var pdfPaths = new List<string>(filePaths.Count);
-                foreach (var fp in filePaths)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var ext = Path.GetExtension(fp).ToLowerInvariant();
-                    if (ext is ".doc" or ".docx")
-                    {
-                        var converted = WordConverter.ConvertToPdf(fp);
-                        if (converted == null)
-                            return OperationResult.Fail(
-                                $"Could not convert '{Path.GetFileName(fp)}'. " +
-                                "Ensure Microsoft Word is installed.");
-                        tempFiles.Add(converted);
-                        pdfPaths.Add(converted);
-                    }
-                    else
-                    {
-                        pdfPaths.Add(fp);
-                    }
-                }
-
                 ct.ThrowIfCancellationRequested();
 
                 // Use PDFium directly — handles all PDF versions including
                 // cross-reference streams that PdfSharp cannot import.
-                PdfiumMergeNative.MergeFiles(pdfPaths, outputPath);
+                PdfiumMergeNative.MergeFiles(filePaths, outputPath);
 
                 _logger.LogInformation("Merged {Count} files → {Output}", filePaths.Count, outputPath);
                 return OperationResult.Ok($"Merged {filePaths.Count} files");
@@ -59,11 +36,6 @@ public sealed class PdfiumEditor : IPdfEditor
             {
                 _logger.LogError(ex, "Merge failed");
                 return OperationResult.Fail($"Merge failed: {ex.Message}");
-            }
-            finally
-            {
-                foreach (var f in tempFiles)
-                    try { File.Delete(f); } catch { }
             }
         }, ct);
     }
@@ -804,13 +776,6 @@ public sealed class PdfiumEditor : IPdfEditor
 
     private static readonly HashSet<string> _imageExts =
         new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif" };
-    private static readonly HashSet<string> _wordExts =
-        new(StringComparer.OrdinalIgnoreCase) { ".doc", ".docx" };
-    private static readonly HashSet<string> _excelExts =
-        new(StringComparer.OrdinalIgnoreCase) { ".xls", ".xlsx" };
-    private static readonly HashSet<string> _pptExts =
-        new(StringComparer.OrdinalIgnoreCase) { ".ppt", ".pptx" };
-
     public async Task<OperationResult> ConvertToPdfAsync(
         string inputPath, string outputPath, CancellationToken ct = default)
     {
@@ -818,15 +783,6 @@ public sealed class PdfiumEditor : IPdfEditor
 
         if (_imageExts.Contains(ext))
             return await ConvertImagesToPdfAsync(new[] { inputPath }, outputPath, null, ct);
-
-        if (_wordExts.Contains(ext))
-            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.Word, ct);
-
-        if (_excelExts.Contains(ext))
-            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.Excel, ct);
-
-        if (_pptExts.Contains(ext))
-            return await ConvertOfficeDocAsync(inputPath, outputPath, OfficeApp.PowerPoint, ct);
 
         if (ext == ".txt")
             return await ConvertTextToPdfAsync(inputPath, outputPath, ct);
@@ -880,42 +836,6 @@ public sealed class PdfiumEditor : IPdfEditor
             finally
             {
                 foreach (var s in keepAlive) try { s.Dispose(); } catch { }
-            }
-        }, ct);
-    }
-
-    private enum OfficeApp { Word, Excel, PowerPoint }
-
-    private Task<OperationResult> ConvertOfficeDocAsync(
-        string inputPath, string outputPath, OfficeApp app, CancellationToken ct)
-    {
-        return Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                string? result = app switch
-                {
-                    OfficeApp.Word       => WordConverter.ConvertToPdf(inputPath),
-                    OfficeApp.Excel      => ExcelConverter.ConvertToPdf(inputPath),
-                    OfficeApp.PowerPoint => PowerPointConverter.ConvertToPdf(inputPath),
-                    _                    => null,
-                };
-
-                if (result == null)
-                    return OperationResult.Fail(
-                        $"Could not convert '{Path.GetFileName(inputPath)}'. " +
-                        $"Ensure Microsoft {app} is installed.");
-
-                File.Move(result, outputPath, overwrite: true);
-                _logger.LogInformation("Office→PDF: {In} → {Out}", inputPath, outputPath);
-                return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ConvertOffice({App}) failed", app);
-                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
-                return OperationResult.Fail($"Conversion failed: {ex.Message}");
             }
         }, ct);
     }
@@ -985,51 +905,6 @@ public sealed class PdfiumEditor : IPdfEditor
                 return OperationResult.Fail($"Text conversion failed: {ex.Message}");
             }
         }, ct);
-    }
-
-    public Task<OperationResult> ConvertPdfToWordAsync(
-        string inputPath, string outputPath, CancellationToken ct = default)
-    {
-        return Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                // Try Word COM first (best quality, preserves formatting)
-                var temp = WordFromPdfConverter.ConvertToDocx(inputPath);
-                if (temp != null)
-                {
-                    File.Move(temp, outputPath, overwrite: true);
-                    _logger.LogInformation("PDF→DOCX (Word COM): {In} → {Out}", inputPath, outputPath);
-                    return OperationResult.Ok($"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}");
-                }
-
-                // Fallback: styled extraction with PdfPig → Open XML SDK
-                _logger.LogInformation("Word not installed — using pure .NET fallback for PDF→DOCX");
-                var docPages = ExtractStyledPagesWithPdfPig(inputPath);
-                DocxBuilder.Build(docPages, outputPath);
-
-                _logger.LogInformation("PDF→DOCX (pure .NET): {In} → {Out}", inputPath, outputPath);
-                return OperationResult.Ok(
-                    $"Converted {Path.GetFileName(inputPath)} → {Path.GetFileName(outputPath)}\n" +
-                    "(Text-only export — Microsoft Word was not found on this machine.)");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ConvertPdfToWord failed");
-                if (File.Exists(outputPath)) try { File.Delete(outputPath); } catch { }
-                return OperationResult.Fail($"Word conversion failed: {ex.Message}");
-            }
-        }, ct);
-    }
-
-    private static IReadOnlyList<DocPage> ExtractStyledPagesWithPdfPig(string pdfPath)
-    {
-        var result = new List<DocPage>();
-        using var doc = UglyToad.PdfPig.PdfDocument.Open(pdfPath);
-        foreach (var page in doc.GetPages())
-            result.Add(Export.PdfExporter.AnalyzePage(page));
-        return result;
     }
 
     private static IEnumerable<string> WrapLine(string line, XFont font, double maxWidth)

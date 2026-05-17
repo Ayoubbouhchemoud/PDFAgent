@@ -13,19 +13,25 @@ namespace PDFAgent.PdfEngine.Tests.Export;
 /// <summary>
 /// Integration tests for PdfToHtmlConverter.
 ///
-/// Acceptance criteria verified by this suite:
-///   1. Output is real HTML5, not a rasterized page image.
-///   2. Text appears inside &lt;p&gt; elements as selectable text.
-///   3. Large-font text becomes &lt;h1&gt;/&lt;h2&gt;/&lt;h3&gt;.
-///   4. Two separated text blocks become two &lt;p&gt; elements.
-///   5. Bullet items produce &lt;ul&gt;&lt;li&gt; markup.
-///   6. One &lt;article&gt; wraps the document — no &lt;div class="page"&gt; wrappers.
-///   7. Unsupported formats return a failure result without throwing.
-///   8. Missing Python script returns a descriptive failure result.
+/// Acceptance criteria for the position-preserving layout:
+///   1.  Converter succeeds and writes an output file.
+///   2.  Output is a valid HTML5 document.
+///   3.  Text appears as real HTML text — not a rasterised page screenshot.
+///   4.  Body text lives inside absolutely-positioned &lt;span&gt; elements.
+///   5.  Large-font text is represented with a larger CSS font-size.
+///   6.  Two distinct text blocks produce two spans at different vertical positions.
+///   7.  Bullet-prefixed text is preserved as real text.
+///   8.  Page uses &lt;div class="pdf-page"&gt; — no old &lt;article&gt; / page-screenshot wrappers.
+///   9.  Unsupported formats return a failure result without throwing.
+///   10. Missing Python script returns a descriptive failure result.
 ///
-/// Tests 1–6 require Python 3 + pdfplumber on PATH.
-/// If Python is not installed the converter returns a failure result whose
-/// message describes the missing dependency — tests will fail with that message.
+/// Real-PDF tests (require the DTicket test file on disk):
+///   11. DTicket text is NOT dumped into one giant &lt;table&gt;.
+///   12. DTicket embedded logo is preserved as an &lt;img&gt; data-URI.
+///   13. DTicket page container has the correct PDF page dimensions.
+///
+/// Tests 1–10 require Python 3 + pdfplumber on PATH.
+/// Tests 11–13 also require the DTicket PDF in the repo's "test file" folder.
 /// </summary>
 public sealed class HtmlExportTests : IDisposable
 {
@@ -82,9 +88,8 @@ public sealed class HtmlExportTests : IDisposable
         var page = doc.AddPage();
         using var gfx = XGraphics.FromPdfPage(page);
         var font = new XFont("Arial", 12);
-        // Two text blocks separated by ~220pt — well above the 1.8× line-height threshold.
-        gfx.DrawString("First block of text in the document.",     font, XBrushes.Black, new XPoint(40,  60));
-        gfx.DrawString("Second block, separated by a large gap.",  font, XBrushes.Black, new XPoint(40, 280));
+        gfx.DrawString("First block of text in the document.",    font, XBrushes.Black, new XPoint(40,  60));
+        gfx.DrawString("Second block, separated by a large gap.", font, XBrushes.Black, new XPoint(40, 280));
         doc.Save(path);
         return path;
     }
@@ -96,7 +101,6 @@ public sealed class HtmlExportTests : IDisposable
         var page = doc.AddPage();
         using var gfx = XGraphics.FromPdfPage(page);
         var font = new XFont("Arial", 12);
-        // Hyphen-space bullets are reliably read by pdfplumber.
         gfx.DrawString("- Alpha item", font, XBrushes.Black, new XPoint(40,  60));
         gfx.DrawString("- Beta item",  font, XBrushes.Black, new XPoint(40,  85));
         gfx.DrawString("- Gamma item", font, XBrushes.Black, new XPoint(40, 110));
@@ -110,6 +114,21 @@ public sealed class HtmlExportTests : IDisposable
         var result = await _converter.ExportAsync(pdfPath, dest, ExportFormat.Html);
         result.IsSuccess.Should().BeTrue(result.Message);
         return File.ReadAllText(dest, Encoding.UTF8);
+    }
+
+    /// Walk up from the binary directory until the "test file" folder is found.
+    private static string? FindDTicketPdf()
+    {
+        const string fileName = "DTicket_DTTDX3698212-2026-03.pdf";
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "test file", fileName);
+            if (File.Exists(candidate))
+                return candidate;
+            dir = dir.Parent;
+        }
+        return null;
     }
 
     // ── 1. Converter succeeds and produces a file ─────────────────────────────
@@ -152,91 +171,119 @@ public sealed class HtmlExportTests : IDisposable
             "source text must appear verbatim as real HTML text");
 
         html.Should().NotContain("color:transparent",
-            "the transparent-overlay rasterization trick must not be used");
+            "the transparent-overlay rasterisation trick must not be used");
         html.Should().NotContain("class=\"tl\"",
             "old text-layer overlay markup must not appear");
         html.Should().NotContain("class=\"page\"",
-            "page-screenshot wrapper divs must not appear");
+            "bare page-screenshot wrapper class must not appear (pdf-page is allowed)");
     }
 
-    // ── 4. Body text appears inside <p> elements ──────────────────────────────
+    // ── 4. Body text lives in absolutely-positioned <span> elements ───────────
 
     [Fact]
-    public async Task ExportHtml_BodyTextIsInsideParagraphElements()
+    public async Task ExportHtml_BodyTextIsInPositionedSpans()
     {
-        var html = await ExportHtmlAndRead(MakeTextPdf("Paragraph content for test."));
+        const string text = "Paragraph content for test.";
+        var html = await ExportHtmlAndRead(MakeTextPdf(text));
 
-        html.Should().Contain("<p>",  "body text must be wrapped in <p> elements");
-        html.Should().Contain("</p>", "<p> elements must be properly closed");
+        html.Should().Contain("<span style=",
+            "body text must be placed in styled <span> elements");
+        html.Should().Contain("position:absolute",
+            "spans must use position:absolute for faithful PDF-coordinate placement");
+        html.Should().Contain(text,
+            "the source text must appear verbatim inside a span");
 
-        var paras = Regex.Matches(html, @"<p[^>]*>([\s\S]*?)</p>", RegexOptions.IgnoreCase);
-        paras.Count.Should().BeGreaterThan(0, "at least one <p> element must exist");
-
-        bool hasText = paras.Cast<Match>().Any(m =>
+        var spans = Regex.Matches(html, @"<span[^>]*>([\s\S]*?)</span>", RegexOptions.IgnoreCase);
+        bool hasText = spans.Cast<Match>().Any(m =>
             Regex.Replace(m.Groups[1].Value, @"<[^>]+>", "").Trim().Length > 0);
-        hasText.Should().BeTrue("at least one <p> must contain visible text, not be empty");
+        hasText.Should().BeTrue("at least one <span> must contain visible text");
     }
 
-    // ── 5. Large font becomes a heading element ───────────────────────────────
+    // ── 5. Large-font text has a bigger CSS font-size than body text ──────────
 
     [Fact]
-    public async Task ExportHtml_LargeFontBecomesHeadingElement()
+    public async Task ExportHtml_LargeFontHasBiggerCssFontSize()
     {
         var pdf  = MakeHeadingPdf("Main Report Title", headingPt: 24, "Body content.", bodyPt: 11);
         var html = await ExportHtmlAndRead(pdf);
 
-        var headings = Regex.Matches(html, @"<h([1-3])[^>]*>([\s\S]*?)</h\1>", RegexOptions.IgnoreCase);
-        headings.Count.Should().BeGreaterThan(0,
-            "text with a significantly larger font must produce an h1/h2/h3 element");
+        // Collect all font-size values from span styles
+        var fontSizes = Regex.Matches(html, @"font-size:([\d.]+)px", RegexOptions.IgnoreCase)
+            .Cast<Match>()
+            .Select(m => double.Parse(m.Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
 
-        bool hasText = headings.Cast<Match>().Any(m =>
-            Regex.Replace(m.Groups[2].Value, @"<[^>]+>", "").Trim().Length > 0);
-        hasText.Should().BeTrue("the heading element must contain visible text");
+        fontSizes.Should().HaveCountGreaterThan(1,
+            "a PDF with heading + body must produce spans with at least two different font sizes");
+
+        var maxSize = fontSizes.Max();
+        var minSize = fontSizes.Min();
+        (maxSize / minSize).Should().BeGreaterThan(1.5,
+            "the heading font must be noticeably larger than the body font (ratio > 1.5×)");
     }
 
-    // ── 6. Two separated text blocks become two <p> elements ─────────────────
+    // ── 6. Two distinct text blocks appear at different vertical positions ─────
 
     [Fact]
-    public async Task ExportHtml_TwoDistinctBlocks_ProduceTwoParagraphs()
+    public async Task ExportHtml_TwoDistinctBlocks_AppearAtDifferentPositions()
     {
         var html = await ExportHtmlAndRead(MakeTwoBlockPdf());
 
-        var paras = Regex.Matches(html, @"<p[^>]*>[\s\S]*?</p>", RegexOptions.IgnoreCase);
-        paras.Count.Should().BeGreaterThanOrEqualTo(2,
-            "two text blocks with a large vertical gap must produce at least two <p> elements");
+        html.Should().Contain("First block of text",  "first block must be present");
+        html.Should().Contain("Second block",          "second block must be present");
+
+        // Both blocks must appear in positioned spans with distinct top values
+        var topValues = Regex.Matches(html, @"top:([\d.]+)px", RegexOptions.IgnoreCase)
+            .Cast<Match>()
+            .Select(m => double.Parse(m.Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture))
+            .Distinct()
+            .ToList();
+
+        topValues.Should().HaveCountGreaterThanOrEqualTo(2,
+            "two text blocks at different Y positions must produce spans with different top values");
+
+        var gap = topValues.Max() - topValues.Min();
+        gap.Should().BeGreaterThan(100,
+            "blocks separated by ~220 pt in the PDF must differ by at least 100px in top");
     }
 
-    // ── 7. Bullet items produce ul/li markup ──────────────────────────────────
+    // ── 7. Bullet-prefixed text is preserved as visible text ─────────────────
 
     [Fact]
-    public async Task ExportHtml_BulletItems_ProduceUlLiElements()
+    public async Task ExportHtml_BulletText_IsPreservedAsRealText()
     {
         var html = await ExportHtmlAndRead(MakeBulletPdf());
 
-        html.Should().Contain("<ul>",  "bullet items must be wrapped in a <ul> element");
-        html.Should().Contain("<li>",  "each bullet item must be a <li> element");
-        html.Should().Contain("</ul>", "<ul> must be properly closed");
+        html.Should().Contain("Alpha item",  "first bullet text must be present");
+        html.Should().Contain("Beta item",   "second bullet text must be present");
+        html.Should().Contain("Gamma item",  "third bullet text must be present");
+
+        // Text must be in positioned spans, not a rasterised image
+        html.Should().Contain("<span", "bullet text must appear in real HTML elements");
     }
 
-    // ── 8. Single article wrapper, no page-div wrappers ──────────────────────
+    // ── 8. Page uses pdf-page div — no old article/page-screenshot wrappers ───
 
     [Fact]
-    public async Task ExportHtml_UsesOneArticle_NoPageWrapperDivs()
+    public async Task ExportHtml_UsesPageDiv_NoOldArticleOrScreenshotWrappers()
     {
         var html = await ExportHtmlAndRead(MakeTextPdf(pages: 2));
 
-        html.Should().Contain("<article>",  "document must be wrapped in a single <article>");
-        html.Should().Contain("</article>", "<article> must be properly closed");
-        Regex.Matches(html, "<article>", RegexOptions.IgnoreCase).Count
-             .Should().Be(1, "exactly one <article> element must exist");
+        html.Should().Contain("pdf-page",
+            "each page must be wrapped in a <div class=\"pdf-page\"> container");
+        html.Should().Contain("position:absolute",
+            "the converter must use absolute positioning for content placement");
 
-        html.Should().NotContain("class=\"page\"",    "page-wrapper divs must not appear");
-        html.Should().NotContain("class=\"scanned\"", "scanned-image classes must not appear");
+        // Old rasterised-page patterns must not appear
+        html.Should().NotContain("<article>",       "old <article> wrapper must not appear");
+        html.Should().NotContain("class=\"scanned\"", "scanned-image class must not appear");
 
+        // Sanity-check: no class attribute value contains "scanned"
         foreach (Match m in Regex.Matches(html, @"class=""([^""]*)"""))
         {
             var cls = m.Groups[1].Value.ToLowerInvariant();
-            cls.Should().NotContain("page",    $"class '{cls}' must not reference 'page'");
             cls.Should().NotContain("scanned", $"class '{cls}' must not reference 'scanned'");
         }
     }
@@ -278,5 +325,71 @@ public sealed class HtmlExportTests : IDisposable
             if (existed && File.Exists(backup))
                 File.Move(backup, scriptPath, overwrite: true);
         }
+    }
+
+    // ── 11. DTicket: text is NOT all dumped into one giant table ─────────────
+
+    [Fact]
+    public async Task DTicket_TextIsInPositionedSpans_NotOneGiantTable()
+    {
+        var pdfPath = FindDTicketPdf();
+        if (pdfPath is null)
+            return;  // test file not present on this machine — skip
+
+        var html = await ExportHtmlAndRead(pdfPath);
+
+        // There must be exactly one <table> — only the real invoice table
+        var tableCount = Regex.Matches(html, @"<table[^>]*>", RegexOptions.IgnoreCase).Count;
+        tableCount.Should().Be(1,
+            "the whole page must not be turned into a table; only the invoice table should be <table>");
+
+        // Key content must appear as real text, not be swallowed by a table mis-parse
+        html.Should().Contain("Abobestätigung",   "ticket title must be present as text");
+        html.Should().Contain("Ayoub Bouhchemoud", "name must be present as text");
+        html.Should().Contain("DTTDX3698212",      "subscription number must be present");
+        html.Should().Contain("DTfTQRm7",          "ticket code must be present");
+        html.Should().Contain("63,00",             "invoice amount must be present");
+
+        // Body text must be in positioned <span> elements — not all crammed into a table
+        var spanCount = Regex.Matches(html, @"<span[^>]*>", RegexOptions.IgnoreCase).Count;
+        spanCount.Should().BeGreaterThan(5,
+            "most of the page text must be placed as positioned <span> elements outside the table");
+    }
+
+    // ── 12. DTicket: embedded logo is an <img> element with a base64 data-URI ─
+
+    [Fact]
+    public async Task DTicket_EmbeddedLogoIsHtmlImageWithDataUri()
+    {
+        var pdfPath = FindDTicketPdf();
+        if (pdfPath is null)
+            return;
+
+        var html = await ExportHtmlAndRead(pdfPath);
+
+        html.Should().Contain("<img ",
+            "embedded images must appear as <img> elements, not be discarded or rasterised");
+        html.Should().Contain("data:image/",
+            "image must be embedded as a base64 data-URI so it is self-contained");
+        html.Should().Contain("position:absolute",
+            "the <img> element must be absolutely positioned to match the original PDF placement");
+    }
+
+    // ── 13. DTicket: page container has the correct PDF dimensions ────────────
+
+    [Fact]
+    public async Task DTicket_PageContainerMatchesPdfPageDimensions()
+    {
+        var pdfPath = FindDTicketPdf();
+        if (pdfPath is null)
+            return;
+
+        var html = await ExportHtmlAndRead(pdfPath);
+
+        // A4 page is 595 × 842 pt; the container must reflect these values
+        html.Should().MatchRegex(@"width:595(\.0)?px",
+            "page container width must match the PDF's 595 pt A4 width");
+        html.Should().Contain("pdf-page",
+            "page must be wrapped in a div with class pdf-page");
     }
 }
