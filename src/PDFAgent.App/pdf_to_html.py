@@ -115,6 +115,179 @@ def _merge_into_runs(line: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Vector-graphics color helpers
+# ---------------------------------------------------------------------------
+
+def _css_color(c, default: str = "none") -> str:
+    """Convert a pdfplumber color value (grayscale float, RGB tuple, etc.) to a CSS hex string."""
+    if c is None:
+        return default
+    if isinstance(c, str):
+        return default          # spot-color / resource reference — unresolvable
+    try:
+        if isinstance(c, (int, float)):
+            v = max(0, min(255, round(float(c) * 255)))
+            return f"#{v:02x}{v:02x}{v:02x}"
+        if isinstance(c, (tuple, list)):
+            if len(c) == 1:
+                v = max(0, min(255, round(float(c[0]) * 255)))
+                return f"#{v:02x}{v:02x}{v:02x}"
+            if len(c) == 3:
+                r, g, b = (max(0, min(255, round(float(x) * 255))) for x in c)
+                return f"#{r:02x}{g:02x}{b:02x}"
+            if len(c) == 4:                         # CMYK → RGB
+                c_, m, y_, k = (float(x) for x in c)
+                r = max(0, min(255, round(255 * (1 - c_) * (1 - k))))
+                g = max(0, min(255, round(255 * (1 - m)  * (1 - k))))
+                b = max(0, min(255, round(255 * (1 - y_) * (1 - k))))
+                return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        pass
+    return default
+
+
+def _is_white_color(c) -> bool:
+    """Return True when c represents white or near-white (≥ 0.99 in every channel)."""
+    if c is None:
+        return False
+    try:
+        if isinstance(c, (int, float)):
+            return float(c) >= 0.99
+        if isinstance(c, (tuple, list)):
+            return all(float(x) >= 0.99 for x in c)
+    except Exception:
+        pass
+    return False
+
+
+def _svg_path_d(path_ops: list) -> str:
+    """
+    Convert pdfplumber path operators to an SVG path 'd' string.
+    Operators: m=moveto, l=lineto, c=curveto(3pts), v=curveto(cp1=current),
+               y=curveto(cp2=endpoint), h=closepath.
+    Coordinates are already in pdfplumber's top-left pixel space.
+    """
+    parts: list[str] = []
+    cx = cy = 0.0
+    for entry in path_ops:
+        op = entry[0]
+        pts = entry[1:]
+        if op == "m":
+            x, y = pts[0]
+            parts.append(f"M {x:.3f} {y:.3f}")
+            cx, cy = x, y
+        elif op == "l":
+            x, y = pts[0]
+            parts.append(f"L {x:.3f} {y:.3f}")
+            cx, cy = x, y
+        elif op == "c":
+            (x1, y1), (x2, y2), (x3, y3) = pts
+            parts.append(f"C {x1:.3f} {y1:.3f} {x2:.3f} {y2:.3f} {x3:.3f} {y3:.3f}")
+            cx, cy = x3, y3
+        elif op == "v":
+            # PDF v: first control point = current point
+            (x2, y2), (x3, y3) = pts
+            parts.append(f"C {cx:.3f} {cy:.3f} {x2:.3f} {y2:.3f} {x3:.3f} {y3:.3f}")
+            cx, cy = x3, y3
+        elif op == "y":
+            # PDF y: second control point = endpoint
+            (x1, y1), (x3, y3) = pts
+            parts.append(f"C {x1:.3f} {y1:.3f} {x3:.3f} {y3:.3f} {x3:.3f} {y3:.3f}")
+            cx, cy = x3, y3
+        elif op == "h":
+            parts.append("Z")
+    return " ".join(parts)
+
+
+def _vector_svg(page, pw: float, ph: float) -> str:
+    """
+    Render all non-text vector elements — curves, lines, non-white filled rects
+    (separator lines, decorative dots) — as an absolutely-positioned inline <svg>.
+    The SVG sits behind text spans and bitmap images so those layers remain on top.
+    """
+    elems: list[str] = []
+
+    # ── Rects (separator lines, decorative fills; skip white / full-page) ──
+    for r in page.rects:
+        rw = r["x1"] - r["x0"]
+        rh = r["bottom"] - r["top"]
+        if rw > pw * 0.95 or rw < 0.2 or rh < 0.2:
+            continue
+        do_fill   = bool(r.get("fill",   False))
+        do_stroke = bool(r.get("stroke", False))
+        fc_raw = r.get("non_stroking_color")
+        sc_raw = r.get("stroking_color")
+        lw     = r.get("linewidth", 0) or 0
+
+        fill_vis   = do_fill   and not _is_white_color(fc_raw) and _css_color(fc_raw) != "none"
+        stroke_vis = do_stroke and not _is_white_color(sc_raw) and lw > 0 and _css_color(sc_raw) != "none"
+        if not fill_vis and not stroke_vis:
+            continue
+
+        fc_css = _css_color(fc_raw) if fill_vis   else "none"
+        sc_css = _css_color(sc_raw) if stroke_vis else "none"
+        attrs  = (f'x="{r["x0"]:.2f}" y="{r["top"]:.2f}" '
+                  f'width="{rw:.2f}" height="{rh:.2f}" fill="{fc_css}"')
+        if stroke_vis:
+            attrs += f' stroke="{sc_css}" stroke-width="{lw:.2f}"'
+        elems.append(f"<rect {attrs}/>")
+
+    # ── Lines ──────────────────────────────────────────────────────────────
+    for ln in page.lines:
+        sc_raw = ln.get("stroking_color")
+        if _is_white_color(sc_raw):
+            continue
+        sc_css = _css_color(sc_raw)
+        if sc_css == "none":
+            continue
+        lw = ln.get("linewidth", 1) or 1
+        elems.append(
+            f'<line x1="{ln["x0"]:.2f}" y1="{ln["top"]:.2f}" '
+            f'x2="{ln["x1"]:.2f}" y2="{ln["bottom"]:.2f}" '
+            f'stroke="{sc_css}" stroke-width="{lw:.2f}"/>'
+        )
+
+    # ── Curves ─────────────────────────────────────────────────────────────
+    for c in page.curves:
+        do_fill   = bool(c.get("fill"))
+        do_stroke = bool(c.get("stroke"))
+        fc_raw    = c.get("non_stroking_color")
+        sc_raw    = c.get("stroking_color")
+        lw        = c.get("linewidth", 1) or 1
+
+        fc_css = _css_color(fc_raw) if do_fill  else "none"
+        sc_css = _css_color(sc_raw) if do_stroke else "none"
+
+        # Skip if both fill and stroke are invisible
+        fill_visible   = do_fill   and fc_css != "none" and not _is_white_color(fc_raw)
+        stroke_visible = do_stroke and sc_css != "none" and not _is_white_color(sc_raw)
+        if not fill_visible and not stroke_visible:
+            continue
+
+        path_d = _svg_path_d(c.get("path", []))
+        if not path_d:
+            continue
+
+        fa = f'fill="{fc_css}"' if fill_visible else 'fill="none"'
+        sa = (f'stroke="{sc_css}" stroke-width="{lw:.2f}"'
+              if stroke_visible else 'stroke="none"')
+        fr = ' fill-rule="evenodd"' if c.get("evenodd") else ""
+        elems.append(f"<path {fa} {sa}{fr} d=\"{path_d}\"/>")
+
+    if not elems:
+        return ""
+
+    return (
+        f'<svg style="position:absolute;left:0;top:0;'
+        f'width:{pw:.0f}px;height:{ph:.0f}px;overflow:visible;pointer-events:none;" '
+        f'xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {pw:.0f} {ph:.0f}">\n'
+        + "\n".join(elems)
+        + "\n</svg>"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Section-rect detection
 # ---------------------------------------------------------------------------
 
@@ -458,6 +631,11 @@ def _process_page(page) -> str:
         return None
 
     parts: list[str] = []
+
+    # ── Vector graphics (bottom layer: logos, separator lines, signatures) ─
+    svg = _vector_svg(page, pw, ph)
+    if svg:
+        parts.append(svg)
 
     # ── Images ───────────────────────────────────────────────────────────
     for img in page.images:
