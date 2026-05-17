@@ -137,6 +137,71 @@ def _section_rects(page) -> list[tuple[float, float]]:
 
 
 # ---------------------------------------------------------------------------
+# Image extraction helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_indexed_palette(cs_raw) -> bytes | None:
+    """
+    Given the raw ColorSpace value from a stream dict, return a 768-byte RGB
+    palette suitable for PIL.putpalette(), or None if unresolvable.
+
+    PDF Indexed colorspace: [/Indexed, baseCS, maxIndex, lookup]
+    The lookup is either raw bytes or a PDFObjRef to a stream/bytes object.
+    """
+    if not isinstance(cs_raw, list) or len(cs_raw) < 4:
+        return None
+
+    name = cs_raw[0]
+    if "Indexed" not in (name.name if hasattr(name, "name") else str(name)):
+        return None
+
+    base   = cs_raw[1]
+    max_idx = int(cs_raw[2])
+    lookup = cs_raw[3]
+
+    # Resolve the lookup table (may be a PDFObjRef pointing to a stream or bytes).
+    pal_bytes: bytes | None = None
+    if isinstance(lookup, bytes):
+        pal_bytes = lookup
+    elif hasattr(lookup, "resolve"):
+        try:
+            obj = lookup.resolve()
+            if isinstance(obj, bytes):
+                pal_bytes = obj
+            elif hasattr(obj, "get_data"):
+                pal_bytes = obj.get_data()
+        except Exception:
+            pass
+
+    if not pal_bytes:
+        return None
+
+    # Determine bytes-per-entry from the base colorspace.
+    base_str = str(base)
+    if ("Gray" in base_str or "gray" in base_str) and not isinstance(base, list):
+        n_ch = 1
+    elif ("CMYK" in base_str or "cmyk" in base_str) and not isinstance(base, list):
+        n_ch = 4
+    else:
+        # DeviceRGB, ICCBased, Lab, CalRGB → treat as 3-channel RGB output.
+        n_ch = 3
+
+    # Build the full 256-entry palette PIL expects (768 bytes for RGB output).
+    full_pal = bytearray(256 * 3)
+    if n_ch == 3:
+        copy_len = min(len(pal_bytes), (max_idx + 1) * 3, 256 * 3)
+        full_pal[:copy_len] = pal_bytes[:copy_len]
+    elif n_ch == 1:
+        for k in range(min(max_idx + 1, len(pal_bytes), 256)):
+            v = pal_bytes[k]
+            full_pal[k * 3: k * 3 + 3] = bytes([v, v, v])
+    else:
+        return None  # CMYK palette not handled
+
+    return bytes(full_pal)
+
+
+# ---------------------------------------------------------------------------
 # Image extraction
 # ---------------------------------------------------------------------------
 
@@ -144,6 +209,8 @@ def _img_html(img: dict) -> str | None:
     """
     Build an absolutely-positioned <img> tag for a pdfplumber image dict.
     Supports DCTDecode (JPEG) natively; reconstructs FlateDecode rasters via PIL.
+    Indexed colorspace palettes are resolved from the PDF object graph so that
+    colours match the original rather than defaulting to black.
     Returns None if the image cannot be read.
     """
     stream = img.get("stream")
@@ -170,12 +237,14 @@ def _img_html(img: dict) -> str | None:
             if not px_w or not px_h:
                 return None
 
-            cs = str(stream.attrs.get("ColorSpace", img.get("colorspace", "")))
+            cs_raw = stream.attrs.get("ColorSpace", img.get("colorspace", ""))
+            cs     = str(cs_raw)
+
             if "Gray" in cs:
                 mode     = "L"
                 expected = px_w * px_h
             elif "Indexed" in cs or "indexed" in cs.lower():
-                # Palette-indexed image: raw bytes are palette indices (1 byte/pixel).
+                # Palette-indexed: 1 byte per pixel (palette index).
                 mode     = "P"
                 expected = px_w * px_h
             elif "CMYK" in cs:
@@ -189,7 +258,14 @@ def _img_html(img: dict) -> str | None:
                 return None
 
             pil = Image.frombytes(mode, (px_w, px_h), raw[:expected])
-            if mode in ("CMYK", "P"):
+
+            if mode == "P":
+                # Apply the real PDF palette so colours match the original.
+                pal = _resolve_indexed_palette(cs_raw)
+                if pal:
+                    pil.putpalette(pal)
+                pil = pil.convert("RGB")
+            elif mode == "CMYK":
                 pil = pil.convert("RGB")
 
             buf = _io.BytesIO()
