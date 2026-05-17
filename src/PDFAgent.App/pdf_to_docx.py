@@ -4,13 +4,13 @@ pdf_to_docx.py — PDF to DOCX converter.
 Reuses the same pdfplumber-based structural extraction as pdf_to_html.py and
 maps each logical block to the closest Word-native element:
 
-  Headings          → Heading 2 / Heading 3 styles
-  Body text         → Normal paragraphs with Calibri font
+  Headings          → Bold Normal paragraphs with bottom border (matches PDF)
+  Body text         → Normal paragraphs with Calibri font (wrapped lines merged)
   Bullet lists      → List Bullet style (real Word lists, not manual •)
   Code/syntax boxes → bordered single-cell tables (monospace Consolas)
   Side-by-side boxes→ 2-column borderless table, each cell bordered
   Tabular data      → Word table
-  Images            → inline embedded images
+  Images            → inline embedded images; if side-by-side with text, layout table
   Page content      → one continuous DOCX (no hard page breaks between pages)
 """
 
@@ -97,6 +97,19 @@ def _set_table_no_borders(table):
     tblPr.append(tblBorders)
 
 
+def _add_para_bottom_border(para, color: str = "000000", sz: int = 6):
+    """Add a bottom border to a paragraph (used to simulate heading underlines)."""
+    pPr = para._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"),   "single")
+    bottom.set(qn("w:sz"),    str(sz))
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), color)
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+
 def _add_run(para, text: str, bold: bool = False, italic: bool = False,
              fontname: str = "Calibri", size: float = 11.0):
     """Add a formatted run to a paragraph."""
@@ -109,7 +122,7 @@ def _add_run(para, text: str, bold: bool = False, italic: bool = False,
 
 
 def _map_fontname(fname: str) -> str:
-    """Map a PDF font name (e.g. 'ABCDEE+Calibri,Bold') to a CSS/Word font name."""
+    """Map a PDF font name (e.g. 'ABCDEE+Calibri,Bold') to a Word font name."""
     base = _base_font(fname)
     _MAP = {
         "calibri":  "Calibri",
@@ -129,14 +142,11 @@ def _map_fontname(fname: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Image extraction (shared with html converter)
+# Image extraction
 # ---------------------------------------------------------------------------
 
 def _extract_image_bytes(img: dict) -> tuple[bytes, str] | None:
-    """
-    Return (raw_bytes, mime_type) for an image dict, or None on failure.
-    Supports DCTDecode (JPEG) and raw raster data via PIL.
-    """
+    """Return (raw_bytes, mime_type) for an image dict, or None on failure."""
     stream = img.get("stream")
     if stream is None:
         return None
@@ -200,10 +210,7 @@ def _is_bullet_word(w: dict) -> bool:
 
 
 def _underline_ys(page) -> set[float]:
-    """
-    Collect Y positions of thin horizontal filled-black rects — these serve as
-    underlines beneath section headings.
-    """
+    """Collect Y positions of thin horizontal filled-black rects (heading underlines)."""
     pw = float(page.width)
     result: set[float] = set()
     for r in page.rects:
@@ -217,10 +224,7 @@ def _underline_ys(page) -> set[float]:
 
 
 def _find_box_pairs(boxes: list[dict]) -> tuple[list[tuple], list[dict]]:
-    """
-    Split content boxes into side-by-side pairs (overlapping Y range, different X)
-    and standalone singles.
-    """
+    """Split content boxes into side-by-side pairs and standalone singles."""
     pairs: list[tuple] = []
     used:  set[int]    = set()
     for i, b1 in enumerate(boxes):
@@ -239,6 +243,48 @@ def _find_box_pairs(boxes: list[dict]) -> tuple[list[tuple], list[dict]]:
     return pairs, singles
 
 
+def _line_height(line: list[dict]) -> float:
+    """Estimate the line height from font size."""
+    if not line:
+        return 14.0
+    return float(line[0].get("size", 11)) * 1.3
+
+
+def _group_into_paragraphs(lines: list[list[dict]], pw: float) -> list[list[list[dict]]]:
+    """
+    Merge consecutive visually-wrapped lines into logical paragraphs.
+
+    A line wraps into the previous one when ALL of:
+      - The vertical gap is within normal line-spacing (≤ 1.8 × line-height)
+      - The left margins match (within 8pt)
+      - The previous line ends near the right margin (gap < 100pt), meaning it
+        was forced to wrap — short lines that end early are their own paragraph
+      - Neither line is a bullet
+    """
+    if not lines:
+        return []
+    groups: list[list[list[dict]]] = [[lines[0]]]
+    for curr in lines[1:]:
+        prev = groups[-1][-1]
+        gap     = curr[0]["top"] - prev[0]["top"]
+        prev_x0 = min(w["x0"] for w in prev)
+        curr_x0 = min(w["x0"] for w in curr)
+        prev_x1 = max(w.get("x1", w["x0"]) for w in prev)
+        lh      = _line_height(prev)
+        is_wrap = (
+            gap <= lh * 1.8 and
+            abs(curr_x0 - prev_x0) < 8 and
+            (pw - prev_x1) < 100 and          # prev line reached near right margin
+            not _is_bullet_word(curr[0]) and
+            not _is_bullet_word(prev[0])
+        )
+        if is_wrap:
+            groups[-1].append(curr)
+        else:
+            groups.append([curr])
+    return groups
+
+
 # ---------------------------------------------------------------------------
 # DOCX writers
 # ---------------------------------------------------------------------------
@@ -249,8 +295,7 @@ def _write_runs(para, runs: list[dict]):
     for run in runs:
         fname = run.get("fontname", "")
         text  = _remap_pua(run["text"], fname)
-        # Preserve inter-run word spacing: if there is a visible gap between
-        # the previous run's end and this run's start, prepend a space.
+        # Preserve inter-run word spacing: prepend a space when there's a gap
         if prev_x1 is not None and run.get("x0", prev_x1) - prev_x1 > 0.5:
             text = " " + text
         prev_x1 = run.get("x1", run.get("x0", 0))
@@ -263,20 +308,17 @@ def _write_runs(para, runs: list[dict]):
         )
 
 
-def _write_paragraph(doc: Document, lines: list[list[dict]],
-                     style: str = "Normal") -> None:
-    """Write one or more lines as a single Word paragraph."""
-    para = doc.add_paragraph(style=style)
+def _write_para_lines(para, lines: list[list[dict]]) -> None:
+    """Write one or more merged lines into a single paragraph with space joins."""
     for li, line in enumerate(lines):
         if li > 0:
-            para.add_run("\n")   # soft line-break within the same paragraph
+            para.add_run(" ")   # word-space between wrapped lines
         _write_runs(para, _merge_into_runs(line))
 
 
 def _write_bullet(doc: Document, line: list[dict]) -> None:
     """Write a single bullet line as a List Bullet paragraph."""
     para = doc.add_paragraph(style="List Bullet")
-    # Strip the leading bullet word so Word's own bullet renders instead
     text_words = [w for w in line if not _is_bullet_word(w)]
     _write_runs(para, _merge_into_runs(text_words))
 
@@ -289,25 +331,23 @@ def _write_code_box(doc: Document, words: list[dict], box: dict) -> None:
     _set_table_no_borders(table)
     cell = table.cell(0, 0)
     _set_cell_borders(cell)
-    # Clear default paragraph inside cell
-    cell.paragraphs[0]._element.getparent().remove(cell.paragraphs[0]._element)
+    # Remove the default empty paragraph inside the cell
+    default_para = cell.paragraphs[0]
+    default_para._element.getparent().remove(default_para._element)
 
     for line in _group_into_lines(words):
-        para = cell.add_paragraph()
-        para.paragraph_format.space_before = Pt(0)
-        para.paragraph_format.space_after  = Pt(0)
-        _write_runs(para, _merge_into_runs(line))
+        p = cell.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(0)
+        _write_runs(p, _merge_into_runs(line))
 
 
 def _write_side_by_side(doc: Document,
                          left_words:  list[dict], left_box:  dict,
                          right_words: list[dict], right_box: dict,
                          left_label:  str = "",   right_label: str = "") -> None:
-    """
-    Write a pair of side-by-side code boxes as a 2-column Word table.
-    Each cell gets individual borders and monospace font.
-    """
-    # Optional label row
+    """Write a pair of side-by-side code boxes as a 2-column Word table."""
+    # Label row above the code pair
     if left_label or right_label:
         lbl = doc.add_paragraph(style="Normal")
         lbl.add_run(left_label).font.name  = "Calibri"
@@ -322,14 +362,13 @@ def _write_side_by_side(doc: Document,
             [(left_words, left_box), (right_words, right_box)]):
         cell = row.cells[cell_idx]
         _set_cell_borders(cell)
-        # Remove default blank paragraph
-        cell.paragraphs[0]._element.getparent().remove(
-            cell.paragraphs[0]._element)
+        default_para = cell.paragraphs[0]
+        default_para._element.getparent().remove(default_para._element)
         for line in _group_into_lines(words):
-            para = cell.add_paragraph()
-            para.paragraph_format.space_before = Pt(0)
-            para.paragraph_format.space_after  = Pt(0)
-            _write_runs(para, _merge_into_runs(line))
+            p = cell.add_paragraph()
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after  = Pt(0)
+            _write_runs(p, _merge_into_runs(line))
 
 
 def _write_table(doc: Document, words: list[dict],
@@ -341,7 +380,6 @@ def _write_table(doc: Document, words: list[dict],
 
     n = len(col_starts)
 
-    # Separate header from data rows (same logic as html converter)
     from pdf_to_html import _DIGIT_RE
 
     header_lines: list[list[dict]] = []
@@ -359,7 +397,6 @@ def _write_table(doc: Document, words: list[dict],
         else:
             data_lines.append(line)
 
-    # Group data lines into logical rows
     logical_rows: list[list[list[dict]]] = []
     cur: list[list[dict]] = []
     for line in data_lines:
@@ -380,10 +417,8 @@ def _write_table(doc: Document, words: list[dict],
 
     row_idx = 0
 
-    # Header row
     if header_lines:
-        hrow = table.rows[row_idx]
-        row_idx += 1
+        hrow = table.rows[row_idx]; row_idx += 1
         for ci in range(n):
             cell = hrow.cells[ci]
             cell.paragraphs[0].clear()
@@ -397,10 +432,8 @@ def _write_table(doc: Document, words: list[dict],
                 run.font.name = _map_fontname(fname)
                 run.font.size = Pt(float(w.get("size", 10)))
 
-    # Data rows
     for row_lines in logical_rows:
-        drow = table.rows[row_idx]
-        row_idx += 1
+        drow = table.rows[row_idx]; row_idx += 1
         for ci in range(n):
             cell = drow.cells[ci]
             cell.paragraphs[0].clear()
@@ -421,7 +454,6 @@ def _write_image(doc: Document, img: dict, page_width_pt: float) -> None:
         return
     raw, _ = result
     img_w_pt = float(img["x1"]) - float(img["x0"])
-    # Scale to a reasonable width: keep PDF size but cap at 6 inches
     width_in = min(img_w_pt / 72.0, 6.0)
     try:
         para = doc.add_paragraph()
@@ -429,6 +461,36 @@ def _write_image(doc: Document, img: dict, page_width_pt: float) -> None:
         run.add_picture(io.BytesIO(raw), width=Inches(width_in))
     except Exception:
         pass
+
+
+def _write_header_layout(doc: Document, img: dict,
+                          right_paras: list[list[list[dict]]], pw: float) -> None:
+    """
+    2-column borderless layout table: image in left cell, text paragraphs in right.
+    Used when the PDF logo sits side-by-side with header text lines.
+    """
+    tbl = doc.add_table(rows=1, cols=2)
+    _set_table_no_borders(tbl)
+    row = tbl.rows[0]
+
+    # Left cell: image
+    left = row.cells[0]
+    _clear_cell_borders(left)
+    result = _extract_image_bytes(img)
+    if result:
+        raw, _ = result
+        img_w_pt = float(img["x1"]) - float(img["x0"])
+        w_in = min(img_w_pt / 72.0, 2.0)
+        left.paragraphs[0].add_run().add_picture(io.BytesIO(raw), width=Inches(w_in))
+
+    # Right cell: text paragraphs
+    right = row.cells[1]
+    _clear_cell_borders(right)
+    default_para = right.paragraphs[0]
+    default_para._element.getparent().remove(default_para._element)
+    for para_lines in right_paras:
+        p = right.add_paragraph()
+        _write_para_lines(p, para_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +505,7 @@ def _process_page(doc: Document, page) -> None:
     # ── Detect content boxes ─────────────────────────────────────────────
     boxes = _content_boxes(page)
 
-    # ── Assign words to boxes ─────────────────────────────────────────────
+    # ── Assign words to boxes vs free ─────────────────────────────────────
     box_words: dict[int, list[dict]] = {i: [] for i in range(len(boxes))}
     free_words: list[dict] = []
     for w in all_words:
@@ -459,7 +521,7 @@ def _process_page(doc: Document, page) -> None:
         if not assigned:
             free_words.append(w)
 
-    # ── Table detection (from free words only) ────────────────────────────
+    # ── Table detection (free words only) ────────────────────────────────
     sections = _section_rects(page, bordered_boxes=boxes)
     table_regions: list[tuple] = []
     for (y_top, y_bot) in sections:
@@ -473,13 +535,10 @@ def _process_page(doc: Document, page) -> None:
         if len(cs) >= _MIN_TABLE_COLS:
             table_regions.append((y_top, y_bot, cs))
 
-    def table_region_for(w: dict):
-        for (yt, yb, cs) in table_regions:
-            if yt - 1 <= w["top"] <= yb + 1:
-                return (yt, yb, cs)
-        return None
-
-    non_table_free = [w for w in free_words if table_region_for(w) is None]
+    non_table_free = [
+        w for w in free_words
+        if not any(yt - 1 <= w["top"] <= yb + 1 for (yt, yb, _cs) in table_regions)
+    ]
 
     # ── Detect heading underlines ─────────────────────────────────────────
     ul_ys = _underline_ys(page)
@@ -490,60 +549,70 @@ def _process_page(doc: Document, page) -> None:
     # ── Box pairing ───────────────────────────────────────────────────────
     pairs, singles = _find_box_pairs(boxes)
 
-    # Box top-Y → label text collected from free words just above
     def _label_above(box_top: float, side: str = "left") -> str:
         candidates = [
             w for w in free_words
-            if 0 < box_top - w["top"] < 35 and "symbol" not in w.get("fontname","").lower()
+            if 0 < box_top - w["top"] < 35 and "symbol" not in w.get("fontname", "").lower()
         ]
         if not candidates:
             return ""
-        # group into lines, pick the line closest to box_top
         ls = _group_into_lines(candidates)
         if not ls:
             return ""
         last_line = ls[-1]
-        # For side-by-side, pick words on the matching side of the page mid
         mid = pw / 2
-        if side == "left":
-            ws = [w for w in last_line if w["x0"] < mid]
-        else:
-            ws = [w for w in last_line if w["x0"] >= mid]
-        return " ".join(_remap_pua(w["text"], w.get("fontname","")) for w in ws)
+        ws = [w for w in last_line if w["x0"] < mid] if side == "left" \
+             else [w for w in last_line if w["x0"] >= mid]
+        return " ".join(_remap_pua(w["text"], w.get("fontname", "")) for w in ws)
 
-    # Build a set of Y-positions that are label lines (to skip when processing free words)
+    # ── Label line exclusion ──────────────────────────────────────────────
     label_line_ys: set[float] = set()
     for (lbox, rbox) in pairs:
-        label_top = lbox["top"]
         for w in free_words:
-            if 0 < label_top - w["top"] < 35:
+            if 0 < lbox["top"] - w["top"] < 35:
                 label_line_ys.add(round(w["top"], 1))
     for box in singles:
         for w in free_words:
             if 0 < box["top"] - w["top"] < 35:
                 label_line_ys.add(round(w["top"], 1))
 
-    # ── Collect all renderable items sorted by Y ──────────────────────────
-    # We process in reading order: images, tables, boxes, and free-text lines
-    # all interleaved by Y position.
-
-    # Gather Y anchors for each element type
-    images         = list(page.images)
-    rendered_table = set()
-    rendered_box   = set()
-    rendered_pair  = set()
-
-    # Lines from non-table free words (excluding label lines)
-    content_lines = _group_into_lines([
+    # ── Group content lines into logical paragraphs ───────────────────────
+    content_words = [
         w for w in non_table_free
         if round(w["top"], 1) not in label_line_ys
-    ])
+    ]
+    content_lines = _group_into_lines(content_words)
+    para_groups   = _group_into_paragraphs(content_lines, pw)
 
-    # Build a flat event list: (y_position, kind, data)
-    events: list[tuple[float, str, object]] = []
+    # ── Images: detect side-by-side with text (header layout) ────────────
+    images = list(page.images)
+    consumed_para_ids: set[int] = set()
 
+    image_events: list[tuple[float, str, object]] = []
     for img in images:
-        events.append((float(img["top"]), "image", img))
+        img_top = float(img["top"])
+        img_bot = float(img["bottom"])
+        img_x1  = float(img["x1"])
+        # Paragraphs that overlap this image's Y range AND start to the right of it
+        side_paras = [
+            pg for pg in para_groups
+            if (pg[0][0]["top"] < img_bot + 5 and
+                max(w.get("bottom", w["top"] + 12) for ln in pg for w in ln) > img_top - 5 and
+                min(w["x0"] for ln in pg for w in ln) > img_x1 - 5)
+        ]
+        if side_paras:
+            for pg in side_paras:
+                consumed_para_ids.add(id(pg))
+            image_events.append((img_top, "header", (img, side_paras)))
+        else:
+            image_events.append((img_top, "image", img))
+
+    # ── Build full event list ─────────────────────────────────────────────
+    rendered_table: set = set()
+    rendered_box:   set = set()
+    rendered_pair:  set = set()
+
+    events: list[tuple[float, str, object]] = list(image_events)
 
     for (yt, yb, cs) in table_regions:
         events.append((yt, "table", (yt, yb, cs)))
@@ -554,25 +623,27 @@ def _process_page(doc: Document, page) -> None:
     for box_idx, box in enumerate(singles):
         events.append((box["top"], "single", box_idx))
 
-    for line in content_lines:
-        top = line[0]["top"]
-        events.append((top, "line", line))
+    for pg in para_groups:
+        events.append((pg[0][0]["top"], "para", pg))
 
     events.sort(key=lambda e: e[0])
 
     # ── Emit DOCX elements in reading order ───────────────────────────────
-    bullet_buffer: list[list[dict]] = []   # accumulate consecutive bullet lines
+    bullet_buffer: list[list[dict]] = []
 
     def flush_bullets():
-        if not bullet_buffer:
-            return
         for item in bullet_buffer:
             _write_bullet(doc, item)
         bullet_buffer.clear()
 
     for (y, kind, data) in events:
 
-        if kind == "image":
+        if kind == "header":
+            flush_bullets()
+            img, side_paras = data
+            _write_header_layout(doc, img, side_paras, pw)
+
+        elif kind == "image":
             flush_bullets()
             _write_image(doc, data, pw)
 
@@ -611,31 +682,40 @@ def _process_page(doc: Document, page) -> None:
             box = singles[box_idx]
             _write_code_box(doc, box_words[boxes.index(box)], box)
 
-        elif kind == "line":
-            line: list[dict] = data
+        elif kind == "para":
+            pg: list[list[dict]] = data
+            if id(pg) in consumed_para_ids:
+                continue
 
-            # Detect bullet line
-            if line and _is_bullet_word(line[0]):
-                bullet_buffer.append(line)
+            first_line = pg[0]
+
+            # Bullet paragraph
+            if first_line and _is_bullet_word(first_line[0]):
+                for line in pg:
+                    bullet_buffer.append(line)
                 continue
 
             flush_bullets()
 
-            # Detect heading
-            all_bold = all(_is_bold(w.get("fontname","")) for w in line)
-            top_y    = line[0]["top"]
-            bot_y    = max(w.get("bottom", w["top"] + 12) for w in line)
+            all_bold      = all(_is_bold(w.get("fontname", "")) for w in first_line)
+            top_y         = first_line[0]["top"]
+            bot_y         = max(w.get("bottom", w["top"] + 12) for w in first_line)
             is_underlined = _near_underline(top_y, bot_y)
 
             if all_bold and is_underlined:
-                para = doc.add_paragraph(style="Heading 2")
-                _write_runs(para, _merge_into_runs(line))
-            elif all_bold and all(w.get("size", 10) >= 10 for w in line):
-                para = doc.add_paragraph(style="Heading 3")
-                _write_runs(para, _merge_into_runs(line))
-            else:
+                # Section heading: bold Normal paragraph with bottom border
                 para = doc.add_paragraph(style="Normal")
-                _write_runs(para, _merge_into_runs(line))
+                para.paragraph_format.space_before = Pt(6)
+                para.paragraph_format.space_after  = Pt(2)
+                _write_runs(para, _merge_into_runs(first_line))
+                _add_para_bottom_border(para)
+                for extra in pg[1:]:
+                    ep = doc.add_paragraph(style="Normal")
+                    _write_para_lines(ep, [extra])
+            else:
+                # Normal paragraph: merge all wrapped lines
+                para = doc.add_paragraph(style="Normal")
+                _write_para_lines(para, pg)
 
     flush_bullets()
 
@@ -656,24 +736,11 @@ def convert(pdf_path: str | Path, title: str | None = None) -> bytes:
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    # Heading 2 style
-    h2 = doc.styles["Heading 2"]
-    h2.font.name = "Calibri"
-    h2.font.size = Pt(13)
-    h2.font.bold = True
-
-    # Heading 3 style
-    h3 = doc.styles["Heading 3"]
-    h3.font.name = "Calibri"
-    h3.font.size = Pt(11)
-    h3.font.bold = True
-
     doc.core_properties.title = doc_title
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_idx, page in enumerate(pdf.pages):
             if page_idx > 0:
-                # Add a page break between PDF pages
                 para = doc.add_paragraph()
                 run  = para.add_run()
                 run.add_break(
