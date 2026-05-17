@@ -117,39 +117,25 @@ public sealed class PdfExporter : IPdfExporter
               <meta name="viewport" content="width=device-width,initial-scale=1"/>
               <title>{{title}}</title>
               <style>
-                *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
                 body {
                   font-family: Arial, Helvetica, sans-serif;
                   font-size: 11pt;
-                  line-height: 1.5;
-                  background: #f0f0f0;
+                  line-height: 1.6;
+                  max-width: 800px;
+                  margin: 2em auto;
                   color: #000;
-                  padding: 24px 16px;
+                  padding: 0 1em;
                 }
-                .page {
-                  background: #fff;
-                  max-width: 210mm;
-                  margin: 0 auto 28px;
-                  padding: 20mm;
-                  box-shadow: 0 2px 10px rgba(0,0,0,.18);
-                }
-                .page-num {
-                  font-size: 8pt;
-                  color: #999;
-                  text-align: right;
-                  margin-bottom: 12px;
-                }
-                h1 { font-size: 20pt; font-weight: bold; margin: 0.5em 0 0.3em; }
-                h2 { font-size: 16pt; font-weight: bold; margin: 0.5em 0 0.3em; }
-                h3 { font-size: 13pt; font-weight: bold; margin: 0.4em 0 0.25em; }
-                p  { margin: 0.35em 0; }
-                p + p { margin-top: 0.6em; }
-                ul, ol { margin: 0.4em 0 0.4em 2em; }
-                li { margin: 0.2em 0; }
+                h1 { font-size: 20pt; font-weight: bold; margin: 0.8em 0 0.4em; }
+                h2 { font-size: 16pt; font-weight: bold; margin: 0.7em 0 0.35em; }
+                h3 { font-size: 13pt; font-weight: bold; margin: 0.6em 0 0.3em; }
+                p  { margin: 0.5em 0; }
+                ul, ol { margin: 0.5em 0 0.5em 2em; }
+                li { margin: 0.25em 0; }
                 table {
                   border-collapse: collapse;
                   width: 100%;
-                  margin: 0.8em 0;
+                  margin: 1em 0;
                   font-size: 10pt;
                 }
                 th, td {
@@ -159,22 +145,11 @@ public sealed class PdfExporter : IPdfExporter
                   vertical-align: top;
                 }
                 th { background: #ebebeb; font-weight: bold; }
-                img.pdf-img {
-                  display: block;
-                  max-width: 100%;
-                  height: auto;
-                  margin: 0.8em auto;
-                }
-                .no-text-layer {
-                  color: #888;
-                  font-style: italic;
-                  border: 1px dashed #ccc;
-                  padding: 1em;
-                  text-align: center;
-                }
+                img { display: block; max-width: 100%; height: auto; margin: 1em auto; }
               </style>
             </head>
             <body>
+            <article>
             """);
         sb.AppendLine();
 
@@ -182,10 +157,6 @@ public sealed class PdfExporter : IPdfExporter
         {
             ct.ThrowIfCancellationRequested();
             var page = pigDoc.GetPage(i + 1);
-
-            sb.Append($"<div class=\"page\" id=\"page{i + 1}\">\n");
-            if (total > 1)
-                sb.Append($"<p class=\"page-num\">Page {i + 1} / {total}</p>\n");
 
             // Primary path: word-level extraction — gives correctly ordered text for every PDF.
             var pageWords = page.GetWords().ToList();
@@ -210,16 +181,15 @@ public sealed class PdfExporter : IPdfExporter
                     // Genuinely scanned / image-only page — no text layer at all.
                     // Emit a notice; do NOT rasterize the page into a screenshot.
                     sb.AppendLine(
-                        $"<p class=\"no-text-layer\">Page {i + 1} — no text layer detected. " +
-                        "This page may be a scanned image. Run OCR to make it searchable.</p>");
+                        $"<p><em>Page {i + 1} — no text layer detected. " +
+                        "This page may be a scanned image. Run OCR to make it searchable.</em></p>");
                 }
             }
 
-            sb.Append("</div>\n");
             progress?.Report((i - start + 1, end - start + 1));
         }
 
-        sb.Append("</body>\n</html>");
+        sb.Append("</article>\n</body>\n</html>");
         File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
         _logger.LogInformation("HTML export: {Path}", outputPath);
         return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
@@ -553,7 +523,7 @@ public sealed class PdfExporter : IPdfExporter
         string b64      = Convert.ToBase64String(img.Data);
         string mime     = img.MediaType;
         string maxStyle = img.WidthPt > 0 ? $" style=\"max-width:{img.WidthPt:F0}pt\"" : "";
-        sb.AppendLine($"<img class=\"pdf-img\"{maxStyle} src=\"data:{mime};base64,{b64}\" alt=\"\"/>");
+        sb.AppendLine($"<img{maxStyle} src=\"data:{mime};base64,{b64}\" alt=\"figure\"/>");
     }
 
     /// <summary>

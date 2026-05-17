@@ -85,7 +85,8 @@ public sealed class ExportTests : IDisposable
         File.Exists(dest).Should().BeTrue();
         var html = File.ReadAllText(dest, Encoding.UTF8);
         html.Should().Contain("<!DOCTYPE html>");
-        html.Should().Contain("<div class=\"page\"");
+        html.Should().Contain("<article>");
+        html.Should().NotContain("class=\"page\"", "output must not use page-wrapper divs");
         html.Length.Should().BeGreaterThan(200);
     }
 
@@ -402,17 +403,29 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
-    public async Task ExportHtml_PageDivWrapsEachPage()
+    public async Task ExportHtml_ProducesSingleFluidArticle_NoPagDivs()
     {
-        var dest = Path.Combine(_dir, "quality_pages.html");
+        var dest = Path.Combine(_dir, "quality_article.html");
         var r    = await Export(ExportFormat.Html, dest);
 
         r.IsSuccess.Should().BeTrue(r.Message);
         var html = File.ReadAllText(dest, Encoding.UTF8);
 
-        // One .page div per PDF page
-        int pageCount = System.Text.RegularExpressions.Regex.Matches(html, "class=\"page\"").Count;
-        pageCount.Should().Be(2, "source PDF has 2 pages — each must produce a .page div");
+        // Single <article> container — no page wrappers, no layout classes
+        html.Should().Contain("<article>", "output must use a single semantic <article> element");
+        html.Should().Contain("</article>", "<article> must be properly closed");
+        html.Should().NotContain("class=\"page\"",  "page-wrapper divs must not appear");
+        html.Should().NotContain("class=\"scanned\"", "scanned-image classes must not appear");
+        // No class attributes should reference pdf, page, or scanned
+        var classMatches = System.Text.RegularExpressions.Regex.Matches(
+            html, @"class=""([^""]*)""");
+        foreach (System.Text.RegularExpressions.Match m in classMatches)
+        {
+            var cls = m.Groups[1].Value.ToLowerInvariant();
+            cls.Should().NotContain("page",    $"class '{cls}' must not reference 'page'");
+            cls.Should().NotContain("scanned", $"class '{cls}' must not reference 'scanned'");
+            cls.Should().NotContain("pdf",     $"class '{cls}' must not reference 'pdf'");
+        }
     }
 
     [Fact]
