@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.IO.Compression;
 using System.Text;
@@ -102,6 +103,22 @@ public sealed class PdfExporter : IPdfExporter
         string inputPath, string outputPath, ExportOptions opts,
         IProgress<(int, int)>? progress, CancellationToken ct)
     {
+        // Full-document exports: try the Python engine first — it produces better
+        // semantic HTML (pdfplumber table detection, per-page median heading sizing).
+        if (opts.AllPages)
+        {
+            var pyResult = TryExportHtmlViaPython(inputPath, outputPath, ct);
+            if (pyResult.IsSuccess)
+            {
+                _logger.LogInformation("HTML export (Python engine): {Path}", outputPath);
+                progress?.Report((1, 1));
+                return pyResult;
+            }
+            _logger.LogInformation(
+                "Python HTML engine unavailable ({Reason}); using C# fallback",
+                pyResult.Message);
+        }
+
         using var pigDoc = UglyToad.PdfPig.PdfDocument.Open(inputPath);
         int total = pigDoc.NumberOfPages;
         var (start, end) = PageRange(opts, total);
@@ -681,6 +698,60 @@ public sealed class PdfExporter : IPdfExporter
     }
 
     private static string HtmlEnc(string s) => System.Net.WebUtility.HtmlEncode(s);
+
+    // ── Python HTML engine shellout ───────────────────────────────────────────
+
+    /// <summary>
+    /// Invokes pdf_to_html.py (bundled next to the executable) via the first
+    /// Python interpreter found on PATH.  Returns a failure result — never throws —
+    /// so the caller can transparently fall back to the C# implementation.
+    /// </summary>
+    private static OperationResult TryExportHtmlViaPython(
+        string inputPath, string outputPath, CancellationToken ct)
+    {
+        string scriptPath = Path.Combine(AppContext.BaseDirectory, "pdf_to_html.py");
+        if (!File.Exists(scriptPath))
+            return OperationResult.Fail("pdf_to_html.py not found alongside executable");
+
+        // Windows ships the Python Launcher as "py"; Linux/macOS use "python3" / "python".
+        string[] candidates = OperatingSystem.IsWindows()
+            ? ["py", "python", "python3"]
+            : ["python3", "python"];
+
+        foreach (var exe in candidates)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName              = exe,
+                    Arguments             = $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"",
+                    CreateNoWindow        = true,
+                    UseShellExecute       = false,
+                    RedirectStandardError = true,
+                };
+                using var proc = Process.Start(psi);
+                if (proc is null) continue;
+
+                bool exited = proc.WaitForExit(60_000); // 60-second hard limit
+                ct.ThrowIfCancellationRequested();
+
+                if (!exited) { proc.Kill(); continue; }
+                if (proc.ExitCode == 0 && File.Exists(outputPath))
+                    return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
+
+                string stderr = proc.StandardError.ReadToEnd().Trim();
+                return OperationResult.Fail(
+                    string.IsNullOrEmpty(stderr) ? $"{exe} exited with code {proc.ExitCode}" : stderr);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Interpreter not on PATH — try the next candidate
+            }
+        }
+
+        return OperationResult.Fail("No Python interpreter found on PATH");
+    }
 
     // ── 3. EPUB (.epub) ───────────────────────────────────────────────────────
 
