@@ -48,12 +48,74 @@ def _is_italic(fname: str) -> bool:
     return "Italic" in fname or "italic" in fname or "Oblique" in fname
 
 
+def _base_font(fname: str) -> str:
+    """Strip PDF subset prefix (e.g. 'ABCDEE+') and style suffixes for family comparison."""
+    if '+' in fname:
+        fname = fname.split('+', 1)[1]
+    for suf in (',Bold', ',Italic', ',BoldItalic', ' Bold', ' Italic', ' BoldItalic'):
+        fname = fname.replace(suf, '')
+    return fname.lower()
+
+
+# Symbol / Wingdings private-use-area → proper Unicode
+_PUA_MAP: dict[str, str] = {
+    '': '•',  # bullet •
+    '': '•',  # alternate bullet
+    '': '▪',  # small filled square ▪
+    '': '°',  # degree °
+    '': '±',  # plus-minus ±
+    '': '×',  # multiplication ×
+    '': '÷',  # division ÷
+    '': '≤',  # ≤
+    '': '≥',  # ≥
+    '': '→',  # →
+    '': '←',  # ←
+    '': '®',  # ®
+    '': '©',  # ©
+}
+
+
+def _remap_pua(text: str, fontname: str) -> str:
+    """Map Private-Use-Area chars (Symbol/Wingdings encoding) to proper Unicode."""
+    fl = fontname.lower()
+    if 'symbol' in fl or 'wingding' in fl or 'zapf' in fl:
+        return ''.join(_PUA_MAP.get(c, c) for c in text)
+    return text
+
+
 def _is_mono(fname: str) -> bool:
     fl = fname.lower()
     return any(m in fl for m in [
         "courier", "consol", "monaco", "menlo",
         "mono", "code", "letter gothic", "andale", "deja",
     ])
+
+
+_FONT_FAMILY_MAP: dict[str, str] = {
+    "calibri":       "Calibri, Arial, sans-serif",
+    "arial":         "Arial, sans-serif",
+    "helvetica":     "Helvetica, Arial, sans-serif",
+    "verdana":       "Verdana, Arial, sans-serif",
+    "tahoma":        "Tahoma, Arial, sans-serif",
+    "trebuchet":     "'Trebuchet MS', Arial, sans-serif",
+    "times":         "'Times New Roman', Times, serif",
+    "timesnewroman": "'Times New Roman', Times, serif",
+    "georgia":       "Georgia, serif",
+    "garamond":      "Garamond, serif",
+    "consolas":      "Consolas, 'Courier New', monospace",
+    "courier":       "'Courier New', Courier, monospace",
+    "lucida":        "'Lucida Console', monospace",
+    "symbol":        "Symbol, Arial, sans-serif",
+}
+
+
+def _css_font_family(fname: str) -> str | None:
+    """Return a CSS font-family string for the given PDF font name, or None."""
+    base = _base_font(fname)
+    for key, css in _FONT_FAMILY_MAP.items():
+        if key in base:
+            return css
+    return None
 
 
 def _group_into_lines(words: list[dict]) -> list[list[dict]]:
@@ -110,11 +172,12 @@ def _merge_into_runs(line: list[dict]) -> list[dict]:
     runs = [dict(line[0])]
     for w in line[1:]:
         p = runs[-1]
-        gap        = w["x0"] - p.get("x1", p["x0"])
-        same_bold  = _is_bold(w.get("fontname", "")) == _is_bold(p.get("fontname", ""))
-        same_ital  = _is_italic(w.get("fontname", "")) == _is_italic(p.get("fontname", ""))
-        same_size  = abs(w.get("size", 12) - p.get("size", 12)) < 0.5
-        if same_bold and same_ital and same_size and gap < _MERGE_GAP:
+        gap         = w["x0"] - p.get("x1", p["x0"])
+        same_bold   = _is_bold(w.get("fontname", "")) == _is_bold(p.get("fontname", ""))
+        same_ital   = _is_italic(w.get("fontname", "")) == _is_italic(p.get("fontname", ""))
+        same_size   = abs(w.get("size", 12) - p.get("size", 12)) < 0.5
+        same_family = _base_font(w.get("fontname", "")) == _base_font(p.get("fontname", ""))
+        if same_bold and same_ital and same_size and same_family and gap < _MERGE_GAP:
             p["text"] = p["text"] + " " + w["text"]
             p["x1"]   = w["x1"]
         else:
@@ -357,12 +420,17 @@ def _box_html(words: list[dict], box: dict) -> str:
             ]
             if is_code:
                 styles.append("font-family:'Courier New',Courier,monospace")
+            else:
+                ff = _css_font_family(fname)
+                if ff:
+                    styles.append(f"font-family:{ff}")
             if _is_bold(fname):
                 styles.append("font-weight:bold")
             if _is_italic(fname):
                 styles.append("font-style:italic")
+            text = _remap_pua(run["text"], fname)
             inner_parts.append(
-                f'<span style="{"; ".join(styles)}">{_esc(run["text"])}</span>'
+                f'<span style="{"; ".join(styles)}">{_esc(text)}</span>'
             )
     css_class = "code-box" if is_code else "content-box"
     container_style = (
@@ -574,12 +642,16 @@ def _span_html(run: dict) -> str:
         f"top:{top:.1f}px",
         f"font-size:{size:.2f}px",
     ]
+    ff = _css_font_family(fname)
+    if ff:
+        styles.append(f"font-family:{ff}")
     if _is_bold(fname):
         styles.append("font-weight:bold")
     if _is_italic(fname):
         styles.append("font-style:italic")
 
-    return f'<span style="{"; ".join(styles)}">{_esc(run["text"])}</span>'
+    text = _remap_pua(run["text"], fname)
+    return f'<span style="{"; ".join(styles)}">{_esc(text)}</span>'
 
 
 # ---------------------------------------------------------------------------
