@@ -16,8 +16,11 @@
     <ProjectReference Include="..\PDFAgent.PdfEngine\PDFAgent.PdfEngine.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Python HTML engine — copied next to the executable so PdfExporter can invoke it -->
+    <!-- Python conversion engines — copied next to the executable so PdfExporter can invoke them -->
     <Content Include="pdf_to_html.py">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="pdf_to_docx.py">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

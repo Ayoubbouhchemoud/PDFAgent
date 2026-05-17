@@ -873,17 +873,22 @@ public sealed partial class MainViewModel : ObservableObject
         { Owner = System.Windows.Application.Current.MainWindow };
         if (dlg.ShowDialog() != true) return;
 
+        var format   = dlg.SelectedFormat;
+        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
+
         // Collect the save path before entering IsBusy — dialogs need the window interactive.
-        var baseName   = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
-        var outputPath = _fileDialog.SaveHtmlFile($"{baseName}.html");
+        var outputPath = format == ExportFormat.Docx
+            ? _fileDialog.SaveDocxFile($"{baseName}.docx")
+            : _fileDialog.SaveHtmlFile($"{baseName}.html");
         if (outputPath == null) return;
 
         IsBusy = true;
         try
         {
-            StatusText = "Exporting as HTML…";
+            string label = format == ExportFormat.Docx ? "Word document" : "HTML";
+            StatusText = $"Exporting as {label}…";
             var result = await _pdfExporter.ExportAsync(
-                _pdfEngine.FilePath, outputPath, ExportFormat.Html);
+                _pdfEngine.FilePath, outputPath, format);
 
             if (result.IsSuccess)
             {

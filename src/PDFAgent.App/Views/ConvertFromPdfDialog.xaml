@@ -1,7 +1,7 @@
 <Window x:Class="PDFAgent.App.Views.ConvertFromPdfDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Export as HTML"
+        Title="Export PDF"
         Width="420" SizeToContent="Height"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
@@ -13,7 +13,7 @@
 
     <StackPanel Margin="24,20">
 
-        <TextBlock Text="Export PDF as HTML"
+        <TextBlock Text="Export PDF"
                    FontFamily="{DynamicResource HeadingFont}"
                    FontSize="18" FontWeight="SemiBold"
                    Foreground="{DynamicResource OnSurfaceBrush}"
@@ -22,25 +22,31 @@
         <TextBlock x:Name="InfoLabel"
                    FontSize="12"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
-                   Margin="0,0,0,20"/>
+                   Margin="0,0,0,16"/>
 
-        <TextBlock TextWrapping="Wrap" FontSize="13"
+        <!-- Format selector -->
+        <TextBlock Text="Output format"
+                   FontSize="13" FontWeight="SemiBold"
                    Foreground="{DynamicResource OnSurfaceBrush}"
-                   Margin="0,0,0,8">
-            The entire document will be converted to a single HTML file with:
-        </TextBlock>
+                   Margin="0,0,0,8"/>
 
-        <StackPanel Margin="12,0,0,16">
-            <TextBlock Text="• Real selectable text — not a screenshot"  FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}" Margin="0,2"/>
-            <TextBlock Text="• Headings, paragraphs, and lists preserved" FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}" Margin="0,2"/>
-            <TextBlock Text="• Tables as HTML table elements"              FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}" Margin="0,2"/>
-            <TextBlock Text="• Images kept as image elements"              FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}" Margin="0,2"/>
+        <StackPanel Margin="0,0,0,16">
+            <RadioButton x:Name="HtmlRadio"
+                         Content="HTML — selectable text, tables, images"
+                         IsChecked="True"
+                         FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"
+                         Margin="0,0,0,6"/>
+            <RadioButton x:Name="DocxRadio"
+                         Content="Word (.docx) — headings, bullets, code boxes"
+                         FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"/>
         </StackPanel>
 
         <TextBlock TextWrapping="Wrap" FontSize="12"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                    Margin="0,0,0,20">
-            Requires Python 3 with pdfplumber installed on PATH.
+            Requires Python 3 with pdfplumber (HTML) or pdfplumber + python-docx (Word) installed.
         </TextBlock>
 
         <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,0,0,16"/>

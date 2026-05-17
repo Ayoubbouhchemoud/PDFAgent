@@ -7,4 +7,5 @@ namespace PDFAgent.Core.Models;
 public enum ExportFormat
 {
     Html,
+    Docx,
 }

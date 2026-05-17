@@ -34,19 +34,21 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         ExportFormat format,
         CancellationToken ct = default)
     {
-        if (format != ExportFormat.Html)
+        if (format != ExportFormat.Html && format != ExportFormat.Docx)
             return Task.FromResult(
                 OperationResult.Fail($"Format '{format}' is not yet implemented."));
 
-        return Task.Run(() => RunPython(inputPath, outputPath, ct), ct);
+        return Task.Run(() => RunPython(inputPath, outputPath, format, ct), ct);
     }
 
-    private OperationResult RunPython(string inputPath, string outputPath, CancellationToken ct)
+    private OperationResult RunPython(string inputPath, string outputPath,
+        ExportFormat format, CancellationToken ct)
     {
-        string scriptPath = Path.Combine(AppContext.BaseDirectory, "pdf_to_html.py");
+        string scriptName = format == ExportFormat.Docx ? "pdf_to_docx.py" : "pdf_to_html.py";
+        string scriptPath = Path.Combine(AppContext.BaseDirectory, scriptName);
         if (!File.Exists(scriptPath))
             return OperationResult.Fail(
-                "pdf_to_html.py not found next to the application. Re-install or rebuild the app.");
+                $"{scriptName} not found next to the application. Re-install or rebuild the app.");
 
         // Windows ships "py" (Python Launcher); Linux/macOS use "python3" / "python".
         string[] candidates = OperatingSystem.IsWindows()
@@ -91,8 +93,9 @@ public sealed class PdfToHtmlConverter : IPdfExporter
 
                 if (proc.ExitCode == 0 && File.Exists(outputPath))
                 {
-                    _logger.LogInformation("HTML export complete: {Path}", outputPath);
-                    return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
+                    string label = format == ExportFormat.Docx ? "DOCX" : "HTML";
+                    _logger.LogInformation("{Label} export complete: {Path}", label, outputPath);
+                    return OperationResult.Ok($"Exported {label} → {Path.GetFileName(outputPath)}");
                 }
 
                 // Windows Store Python alias exits non-zero and outputs a "not found" hint.
@@ -124,10 +127,13 @@ public sealed class PdfToHtmlConverter : IPdfExporter
             if (wslResult is not null) return wslResult;
         }
 
+        string deps = format == ExportFormat.Docx
+            ? "pip install pdfplumber python-docx"
+            : "pip install pdfplumber";
         return OperationResult.Fail(
             "Python 3 is not installed or not on PATH.\n" +
-            "Install Python 3 from python.org and run: pip install pdfplumber\n" +
-            "Alternatively, install WSL and run: pip install pdfplumber inside it.");
+            $"Install Python 3 from python.org and run: {deps}\n" +
+            $"Alternatively, install WSL and run: {deps} inside it.");
     }
 
     private OperationResult? TryWsl(
@@ -162,8 +168,8 @@ public sealed class PdfToHtmlConverter : IPdfExporter
 
             if (proc.ExitCode == 0 && File.Exists(outputPath))
             {
-                _logger.LogInformation("HTML export via WSL complete: {Path}", outputPath);
-                return OperationResult.Ok($"Exported HTML → {Path.GetFileName(outputPath)}");
+                _logger.LogInformation("Export via WSL complete: {Path}", outputPath);
+                return OperationResult.Ok($"Exported → {Path.GetFileName(outputPath)}");
             }
 
             if (!string.IsNullOrEmpty(combined))
