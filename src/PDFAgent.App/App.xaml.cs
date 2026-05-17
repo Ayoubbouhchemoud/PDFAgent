@@ -65,7 +65,7 @@ public partial class App : Application
         // (IPdfEngine holds document state; others are stateless but share Singleton lifetime)
         services.AddSingleton<IPdfEngine, PdfiumEngine>();
         services.AddSingleton<IPdfEditor, PdfiumEditor>();
-        services.AddSingleton<IPdfExporter, PdfExporter>();
+        services.AddSingleton<IPdfExporter, PdfToHtmlConverter>();
         services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
         services.AddSingleton<IRedactionEngine, PdfRedactionEngine>();
 

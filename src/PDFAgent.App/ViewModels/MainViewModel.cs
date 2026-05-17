@@ -863,7 +863,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool CanConvert() => !IsBusy;
 
-    // ── Convert PDF to… ──────────────────────────────────────────────────────
+    // ── Convert PDF to HTML ───────────────────────────────────────────────────
 
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task ConvertFromPdfAsync()
@@ -873,82 +873,22 @@ public sealed partial class MainViewModel : ObservableObject
         { Owner = System.Windows.Application.Current.MainWindow };
         if (dlg.ShowDialog() != true) return;
 
-        var fmt      = dlg.SelectedFormat;
-        var baseName = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
-        var pageIdx  = dlg.AllPages ? 0 : CurrentPage - 1;
-
-        // ── Collect output path BEFORE IsBusy ────────────────────────────────
-        // Dialogs need the window fully interactive.
-        string? outputFile   = null;
-        string? outputFolder = null;
-
-        // Formats that need a password dialog first
-        string? userPw = null, ownerPw = null;
-        if (fmt == ExportFormat.SecurePdf)
-        {
-            var pwDlg = _fileDialog.ShowSecurePdfDialog();
-            if (pwDlg == null) return;
-            userPw  = pwDlg.UserPassword;
-            ownerPw = pwDlg.OwnerPassword;
-        }
-
-        // Multi-file formats (all pages → folder)
-        bool isMultiFile = (fmt is ExportFormat.Png or ExportFormat.Jpg or ExportFormat.Svg)
-                           && dlg.AllPages && TotalPages > 1;
-
-        if (isMultiFile)
-        {
-            outputFolder = _fileDialog.SelectFolder();
-        }
-        else
-        {
-            outputFile = fmt switch
-            {
-                ExportFormat.Txt      => _fileDialog.SaveTextFile($"{baseName}.txt"),
-                ExportFormat.Html     => _fileDialog.SaveHtmlFile($"{baseName}.html"),
-                ExportFormat.Epub     => _fileDialog.SaveEpubFile($"{baseName}.epub"),
-                ExportFormat.Png      => _fileDialog.SaveImageFile($"{baseName}_page{pageIdx + 1}.png"),
-                ExportFormat.Jpg      => _fileDialog.SaveImageFile($"{baseName}_page{pageIdx + 1}.jpg"),
-                ExportFormat.Svg      => _fileDialog.SaveSvgFile($"{baseName}_page{pageIdx + 1}.svg"),
-                ExportFormat.Pdf      => _fileDialog.SavePdf($"{baseName}_copy.pdf"),
-                ExportFormat.PdfA1b   => _fileDialog.SavePdf($"{baseName}_pdfa1b.pdf"),
-                ExportFormat.PdfA2b   => _fileDialog.SavePdf($"{baseName}_pdfa2b.pdf"),
-                ExportFormat.PdfA3b   => _fileDialog.SavePdf($"{baseName}_pdfa3b.pdf"),
-                ExportFormat.SecurePdf=> _fileDialog.SavePdf($"{baseName}_secure.pdf"),
-                ExportFormat.Docx     => _fileDialog.SaveDocxFile($"{baseName}.docx"),
-                ExportFormat.Pptx     => _fileDialog.SavePptxFile($"{baseName}.pptx"),
-                ExportFormat.Xlsx     => _fileDialog.SaveXlsxFile($"{baseName}.xlsx"),
-                _                     => null,
-            };
-        }
-
-        if (outputFile == null && outputFolder == null) return;
-
-        var outputPath = outputFile ?? outputFolder!;
-        var opts = new ExportOptions
-        {
-            Dpi           = dlg.SelectedDpi,
-            AllPages      = dlg.AllPages,
-            PageIndex     = pageIdx,
-            UserPassword  = userPw,
-            OwnerPassword = ownerPw,
-        };
+        // Collect the save path before entering IsBusy — dialogs need the window interactive.
+        var baseName   = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
+        var outputPath = _fileDialog.SaveHtmlFile($"{baseName}.html");
+        if (outputPath == null) return;
 
         IsBusy = true;
         try
         {
-            StatusText = $"Exporting as {fmt}…";
-
-            var progress = new Progress<(int Current, int Total)>(p =>
-                StatusText = $"Page {p.Current} of {p.Total}…");
-
+            StatusText = "Exporting as HTML…";
             var result = await _pdfExporter.ExportAsync(
-                _pdfEngine.FilePath, outputPath, fmt, opts, progress);
+                _pdfEngine.FilePath, outputPath, ExportFormat.Html);
 
             if (result.IsSuccess)
             {
                 StatusText = $"Exported → {Path.GetFileName(outputPath)}";
-                ShowConvertSuccess(result.Message ?? "Export complete.", outputPath, isMultiFile);
+                ShowConvertSuccess(result.Message ?? "Export complete.", outputPath);
             }
             else
             {
