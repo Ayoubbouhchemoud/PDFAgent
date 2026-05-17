@@ -143,7 +143,7 @@ def _section_rects(page) -> list[tuple[float, float]]:
 def _img_html(img: dict) -> str | None:
     """
     Build an absolutely-positioned <img> tag for a pdfplumber image dict.
-    Supports DCTDecode (JPEG) natively; attempts PIL for other formats.
+    Supports DCTDecode (JPEG) natively; reconstructs FlateDecode rasters via PIL.
     Returns None if the image cannot be read.
     """
     stream = img.get("stream")
@@ -156,23 +156,46 @@ def _img_html(img: dict) -> str | None:
 
     filt = str(stream.attrs.get("Filter", ""))
     if "DCT" in filt or "JPEG" in filt:
+        # get_data() returns the raw JPEG bytes for DCTDecode streams.
         mime = "image/jpeg"
     else:
         try:
             from PIL import Image
             import io as _io
-            cs    = str(img.get("colorspace", ""))
-            w_px  = int(img.get("width",  0))
-            h_px  = int(img.get("height", 0))
-            if w_px and h_px:
-                mode = "L" if "Gray" in cs else "RGB"
-                pil  = Image.frombytes(mode, (w_px, h_px), raw)
-                buf  = _io.BytesIO()
-                pil.save(buf, format="PNG")
-                raw  = buf.getvalue()
-                mime = "image/png"
-            else:
+
+            # Pixel dimensions come from the image XObject's /Width & /Height,
+            # NOT from img["width"/"height"] which are PDF coordinate widths.
+            px_w = int(stream.attrs.get("Width",  0))
+            px_h = int(stream.attrs.get("Height", 0))
+            if not px_w or not px_h:
                 return None
+
+            cs = str(stream.attrs.get("ColorSpace", img.get("colorspace", "")))
+            if "Gray" in cs:
+                mode     = "L"
+                expected = px_w * px_h
+            elif "Indexed" in cs or "indexed" in cs.lower():
+                # Palette-indexed image: raw bytes are palette indices (1 byte/pixel).
+                mode     = "P"
+                expected = px_w * px_h
+            elif "CMYK" in cs:
+                mode     = "CMYK"
+                expected = px_w * px_h * 4
+            else:
+                mode     = "RGB"
+                expected = px_w * px_h * 3
+
+            if len(raw) < expected:
+                return None
+
+            pil = Image.frombytes(mode, (px_w, px_h), raw[:expected])
+            if mode in ("CMYK", "P"):
+                pil = pil.convert("RGB")
+
+            buf = _io.BytesIO()
+            pil.save(buf, format="PNG")
+            raw  = buf.getvalue()
+            mime = "image/png"
         except Exception:
             return None
 
@@ -254,18 +277,22 @@ def _table_html(words: list[dict], col_starts: list[float], y_top: float) -> str
             data_lines.append(line)
 
     # ── Build cell text for a group of lines ─────────────────────────────
-    # Use individual words (NOT merged runs) so words that span narrow column
-    # boundaries are never mis-assigned to the wrong column.
+    # Each physical line becomes one "segment" per cell; segments are joined
+    # with <br> so multi-line cell content is preserved faithfully.
     def cells_from(row_lines: list[list[dict]]) -> list[str]:
-        cols: list[list[str]] = [[] for _ in range(n)]
+        cols: list[list[str]] = [[] for _ in range(n)]  # per-col line segments
         for ln in row_lines:
+            line_cells: list[list[str]] = [[] for _ in range(n)]
             for w in ln:
                 ci   = _assign_col(w["x0"], col_starts)
                 text = _esc(w["text"])
                 if _is_bold(w.get("fontname", "")):
                     text = f"<strong>{text}</strong>"
-                cols[ci].append(text)
-        return [" ".join(c) for c in cols]
+                line_cells[ci].append(text)
+            for ci in range(n):
+                if line_cells[ci]:
+                    cols[ci].append(" ".join(line_cells[ci]))
+        return ["<br>".join(c) for c in cols]
 
     # ── Group data lines into logical rows ────────────────────────────────
     # A new logical row starts on a line that has col-0 content.
@@ -286,8 +313,9 @@ def _table_html(words: list[dict], col_starts: list[float], y_top: float) -> str
         return ""
 
     # ── Column widths ─────────────────────────────────────────────────────
+    right_edge = max((float(w["x1"]) for w in words), default=col_starts[-1] + 50)
     col_widths = [col_starts[i + 1] - col_starts[i] for i in range(n - 1)]
-    col_widths.append(50.0)   # last column gets a minimum width
+    col_widths.append(max(right_edge - col_starts[-1], 30.0))
 
     # ── Assemble HTML ─────────────────────────────────────────────────────
     tbl_left = col_starts[0]
@@ -367,8 +395,13 @@ def _process_page(page) -> str:
         if (yt, yb) in rendered:
             continue
         tbl_words = [w for w in all_words if yt - 1 <= w["top"] <= yb + 1]
-        parts.append(_table_html(tbl_words, cs, yt))
         rendered.add((yt, yb))
+        if not tbl_words:
+            continue
+        # Use actual first-word top so the table aligns with its text content,
+        # not with the section background rect which may start a few pt higher.
+        first_top = min(w["top"] for w in tbl_words)
+        parts.append(_table_html(tbl_words, cs, first_top))
 
     # ── Positioned text spans ─────────────────────────────────────────────
     non_table = [w for w in all_words if table_region_for(w) is None]
