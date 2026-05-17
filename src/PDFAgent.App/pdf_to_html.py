@@ -48,6 +48,14 @@ def _is_italic(fname: str) -> bool:
     return "Italic" in fname or "italic" in fname or "Oblique" in fname
 
 
+def _is_mono(fname: str) -> bool:
+    fl = fname.lower()
+    return any(m in fl for m in [
+        "courier", "consol", "monaco", "menlo",
+        "mono", "code", "letter gothic", "andale", "deja",
+    ])
+
+
 def _group_into_lines(words: list[dict]) -> list[list[dict]]:
     """Group word dicts into horizontal lines by similar top-Y (±_LINE_TOL pt)."""
     if not words:
@@ -288,22 +296,109 @@ def _vector_svg(page, pw: float, ph: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Bordered content-box detection (code boxes, info boxes)
+# ---------------------------------------------------------------------------
+
+def _content_boxes(page) -> list[dict]:
+    """
+    Detect bordered content boxes — stroked rects with a visible, non-white border.
+    Deduplicated so fill+stroke rect pairs at the same coordinates count once.
+    Returns list of {x0, x1, top, bottom}.
+    """
+    pw = float(page.width)
+    boxes: list[dict] = []
+    seen: set[tuple] = set()
+    for r in page.rects:
+        rw = r["x1"] - r["x0"]
+        rh = r["bottom"] - r["top"]
+        if rw < 20 or rh < 20:
+            continue
+        if rw > pw * 0.95:
+            continue
+        if not r.get("stroke", False):
+            continue
+        sc = r.get("stroking_color")
+        if _is_white_color(sc) or _css_color(sc) == "none":
+            continue
+        key = (round(r["x0"]), round(r["x1"]), round(r["top"]), round(r["bottom"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        boxes.append({"x0": r["x0"], "x1": r["x1"],
+                      "top": r["top"], "bottom": r["bottom"]})
+    return boxes
+
+
+def _box_html(words: list[dict], box: dict) -> str:
+    """
+    Render a bordered content box as an absolutely-positioned container <div>
+    with relative-positioned spans inside for each text run.
+    """
+    if not words:
+        return ""
+    is_code = any(_is_mono(w.get("fontname", "")) for w in words)
+    x0     = box["x0"]
+    top    = box["top"]
+    width  = box["x1"] - x0
+    height = box["bottom"] - top
+    inner_parts: list[str] = []
+    for line in _group_into_lines(words):
+        for run in _merge_into_runs(line):
+            fname    = run.get("fontname", "")
+            size     = float(run.get("size", 9))
+            rel_left = float(run["x0"]) - x0
+            rel_top  = float(run["top"]) - top
+            styles   = [
+                "position:absolute",
+                f"left:{rel_left:.1f}px",
+                f"top:{rel_top:.1f}px",
+                f"font-size:{size:.2f}px",
+                "white-space:nowrap",
+            ]
+            if is_code:
+                styles.append("font-family:'Courier New',Courier,monospace")
+            if _is_bold(fname):
+                styles.append("font-weight:bold")
+            if _is_italic(fname):
+                styles.append("font-style:italic")
+            inner_parts.append(
+                f'<span style="{"; ".join(styles)}">{_esc(run["text"])}</span>'
+            )
+    css_class = "code-box" if is_code else "content-box"
+    container_style = (
+        f"position:absolute;left:{x0:.1f}px;top:{top:.1f}px;"
+        f"width:{width:.1f}px;height:{height:.1f}px;overflow:hidden;"
+    )
+    inner = "\n".join(inner_parts)
+    return f'<div class="{css_class}" style="{container_style}">\n{inner}\n</div>'
+
+
+# ---------------------------------------------------------------------------
 # Section-rect detection
 # ---------------------------------------------------------------------------
 
-def _section_rects(page) -> list[tuple[float, float]]:
+def _section_rects(page, bordered_boxes: list[dict] | None = None) -> list[tuple[float, float]]:
     """
     Return (y_top, y_bot) of content-section background rectangles.
-    Full-page-width backgrounds and tiny decorations are excluded.
+    Full-page-width backgrounds, tiny decorations, and rects that match a
+    bordered content-box (same rounded coordinates) are excluded.
     """
     pw = float(page.width)
+    box_coords: set[tuple] = set()
+    if bordered_boxes:
+        for box in bordered_boxes:
+            box_coords.add((round(box["x0"]), round(box["x1"]),
+                            round(box["top"]), round(box["bottom"])))
     result: set[tuple[float, float]] = set()
     for r in page.rects:
         w = r["x1"] - r["x0"]
         h = r["bottom"] - r["top"]
-        if w > pw * 0.95:   # full-page background
+        if w > pw * 0.95:
             continue
-        if h < 15 or w < 50:  # decoration
+        if h < 15 or w < 50:
+            continue
+        key = (round(r["x0"]), round(r["x1"]), round(r["top"]), round(r["bottom"]))
+        if key in box_coords:
             continue
         result.add((r["top"], r["bottom"]))
     return sorted(result)
@@ -606,15 +701,31 @@ def _process_page(page) -> str:
     ph = float(page.height)
 
     all_words = page.extract_words(extra_attrs=["size", "fontname"])
-    sections  = _section_rects(page)
 
-    # ── Detect table regions ──────────────────────────────────────────────
-    # Each section-background rect is a candidate; it is confirmed as a table
-    # if its first word-line has ≥ _MIN_TABLE_COLS distinct column starts.
+    # ── Step 1: detect bordered content boxes (code boxes, info boxes) ────
+    boxes = _content_boxes(page)
+
+    # ── Step 2: partition words into box-owned vs free ────────────────────
+    box_words: dict[int, list[dict]] = {i: [] for i in range(len(boxes))}
+    free_words: list[dict] = []
+    for w in all_words:
+        wx1 = w.get("x1", w["x0"] + 1)
+        wb  = w.get("bottom", w["top"] + 1)
+        assigned = False
+        for i, box in enumerate(boxes):
+            if (box["x0"] - 2 <= w["x0"] and wx1 <= box["x1"] + 2 and
+                    box["top"] - 2 <= w["top"] and wb <= box["bottom"] + 2):
+                box_words[i].append(w)
+                assigned = True
+                break
+        if not assigned:
+            free_words.append(w)
+
+    # ── Step 3: table detection — free words only, excludes box rects ─────
+    sections = _section_rects(page, bordered_boxes=boxes)
     table_regions: list[tuple[float, float, list[float]]] = []
-
     for (y_top, y_bot) in sections:
-        band = [w for w in all_words if y_top - 1 <= w["top"] <= y_bot + 1]
+        band = [w for w in free_words if y_top - 1 <= w["top"] <= y_bot + 1]
         if not band:
             continue
         lines = _group_into_lines(band)
@@ -643,22 +754,26 @@ def _process_page(page) -> str:
         if h:
             parts.append(h)
 
-    # ── Tables ───────────────────────────────────────────────────────────
+    # ── Bordered content boxes (code / info boxes) ────────────────────────
+    for i, box in enumerate(boxes):
+        h = _box_html(box_words[i], box)
+        if h:
+            parts.append(h)
+
+    # ── Tables (from free words only) ─────────────────────────────────────
     rendered: set[tuple[float, float]] = set()
     for (yt, yb, cs) in table_regions:
         if (yt, yb) in rendered:
             continue
-        tbl_words = [w for w in all_words if yt - 1 <= w["top"] <= yb + 1]
+        tbl_words = [w for w in free_words if yt - 1 <= w["top"] <= yb + 1]
         rendered.add((yt, yb))
         if not tbl_words:
             continue
-        # Use actual first-word top so the table aligns with its text content,
-        # not with the section background rect which may start a few pt higher.
         first_top = min(w["top"] for w in tbl_words)
         parts.append(_table_html(tbl_words, cs, first_top))
 
-    # ── Positioned text spans ─────────────────────────────────────────────
-    non_table = [w for w in all_words if table_region_for(w) is None]
+    # ── Positioned text spans (non-table free words) ──────────────────────
+    non_table = [w for w in free_words if table_region_for(w) is None]
     for line in _group_into_lines(non_table):
         for run in _merge_into_runs(line):
             parts.append(_span_html(run))
@@ -699,7 +814,17 @@ _CSS = """\
   }
   th { font-weight: bold; text-align: left; }
   td { text-align: left; }
-  img { display: block; }"""
+  img { display: block; }
+  .code-box, .content-box {
+    position: absolute;
+    overflow: hidden;
+  }
+  .code-box span, .content-box span {
+    position: absolute;
+    white-space: nowrap;
+    line-height: 1;
+    color: #000;
+  }"""
 
 
 def _wrap(title: str, body: str) -> str:
