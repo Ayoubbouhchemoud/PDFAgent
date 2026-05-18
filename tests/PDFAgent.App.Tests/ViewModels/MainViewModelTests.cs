@@ -25,6 +25,7 @@ public sealed class MainViewModelTests
             NullLogger<MainViewModel>.Instance,
             engine,
             editor,
+            Substitute.For<IPdfExporter>(),
             Substitute.For<IOcrEngine>(),
             Substitute.For<IRedactionEngine>(),
             dialog);
@@ -50,6 +51,7 @@ public sealed class MainViewModelTests
         var vm = new MainViewModel(
             NullLogger<MainViewModel>.Instance,
             engine, editor,
+            Substitute.For<IPdfExporter>(),
             Substitute.For<IOcrEngine>(),
             Substitute.For<IRedactionEngine>(),
             dialog);
@@ -138,6 +140,7 @@ public sealed class MainViewModelTests
             var vm = new MainViewModel(
                 NullLogger<MainViewModel>.Instance,
                 engine, Substitute.For<IPdfEditor>(),
+                Substitute.For<IPdfExporter>(),
                 Substitute.For<IOcrEngine>(), Substitute.For<IRedactionEngine>(), dialog);
             vm.IsDocumentLoaded = true;
             vm.DocumentInfo = info;
@@ -266,6 +269,7 @@ public sealed class MainViewModelTests
         var vm2 = new MainViewModel(
             NullLogger<MainViewModel>.Instance,
             engine, Substitute.For<IPdfEditor>(),
+            Substitute.For<IPdfExporter>(),
             Substitute.For<IOcrEngine>(), redaction, dialog);
         vm2.IsDocumentLoaded = true;
         vm2.DocumentInfo = engine.DocumentInfo;
@@ -295,6 +299,7 @@ public sealed class MainViewModelTests
         var vm2 = new MainViewModel(
             NullLogger<MainViewModel>.Instance,
             engine, Substitute.For<IPdfEditor>(),
+            Substitute.For<IPdfExporter>(),
             Substitute.For<IOcrEngine>(), redaction, dialog);
         vm2.IsDocumentLoaded = true;
         vm2.DocumentInfo = engine.DocumentInfo;
@@ -326,6 +331,7 @@ public sealed class MainViewModelTests
         var vm = new MainViewModel(
             NullLogger<MainViewModel>.Instance,
             engine, Substitute.For<IPdfEditor>(),
+            Substitute.For<IPdfExporter>(),
             ocrEngine, Substitute.For<IRedactionEngine>(),
             Substitute.For<IFileDialogService>());
 
