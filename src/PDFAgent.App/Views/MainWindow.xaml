@@ -5,7 +5,7 @@
         xmlns:converters="clr-namespace:PDFAgent.App.Converters"
         xmlns:local="clr-namespace:PDFAgent.App.Views"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="PDF Professional" Icon="PDFAgent.ico" Height="900" Width="1400"
+        Title="PDF Professional" Icon="/PDFAgent.ico" Height="900" Width="1400"
         WindowState="Maximized"
         Background="{DynamicResource SurfaceBrush}"
         FontFamily="{DynamicResource BodyFont}"

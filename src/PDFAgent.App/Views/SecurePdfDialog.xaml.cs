@@ -11,7 +11,13 @@ public partial class SecurePdfDialog : Window
     public string? UserPassword  => Options?.UserPassword;
     public string? OwnerPassword => Options?.OwnerPassword;
 
-    public SecurePdfDialog() => InitializeComponent();
+    public SecurePdfDialog()
+    {
+        InitializeComponent();
+        // Wire up after InitializeComponent so AllowHiQPrintChk is guaranteed to exist.
+        AllowPrintChk.Checked   += AllowPrint_Changed;
+        AllowPrintChk.Unchecked += AllowPrint_Changed;
+    }
 
     private void Password_Changed(object sender, RoutedEventArgs e) =>
         ErrorLabel.Visibility = Visibility.Collapsed;

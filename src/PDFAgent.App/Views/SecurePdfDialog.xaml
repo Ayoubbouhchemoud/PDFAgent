@@ -118,8 +118,7 @@
                           IsChecked="True"
                           FontSize="13"
                           Foreground="{DynamicResource OnSurfaceBrush}"
-                          Margin="0,0,0,8"
-                          Checked="AllowPrint_Changed" Unchecked="AllowPrint_Changed"/>
+                          Margin="0,0,0,8"/>
                 <CheckBox x:Name="AllowHiQPrintChk"
                           Content="Allow high-quality print"
                           IsChecked="True"

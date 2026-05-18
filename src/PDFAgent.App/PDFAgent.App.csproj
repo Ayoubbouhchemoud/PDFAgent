@@ -13,9 +13,7 @@
     <SelfContained>false</SelfContained>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="PDFAgent.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Resource Include="PDFAgent.ico" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\PDFAgent.Core\PDFAgent.Core.csproj" />
