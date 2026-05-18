@@ -144,6 +144,31 @@ public sealed partial class MainViewModel : ObservableObject
                 await _pdfEngine.CloseAsync();
 
             var result = await _pdfEngine.OpenAsync(filePath, ct: ct);
+
+            if (!result.IsSuccess && result.ErrorCode == "ENCRYPTED")
+            {
+                // PDF requires a password — prompt the user (must be on UI thread)
+                string? password = null;
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                    password = _fileDialog.ShowOpenPasswordDialog());
+
+                if (password == null)
+                {
+                    StatusText = "Open cancelled — document is password-protected.";
+                    return;
+                }
+
+                result = await _pdfEngine.OpenAsync(filePath, password, ct: ct);
+
+                if (!result.IsSuccess)
+                {
+                    StatusText = result.ErrorCode == "ENCRYPTED"
+                        ? "Incorrect password — could not open the document."
+                        : $"Failed: {result.Message}";
+                    return;
+                }
+            }
+
             if (!result.IsSuccess || result.Value == null)
             {
                 StatusText = $"Failed: {result.Message}";

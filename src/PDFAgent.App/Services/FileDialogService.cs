@@ -287,6 +287,12 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog() == true ? dialog.Password : null;
     }
 
+    public string? ShowOpenPasswordDialog()
+    {
+        var dialog = new Views.OpenPasswordDialog { Owner = Application.Current.MainWindow };
+        return dialog.ShowDialog() == true ? dialog.Password : null;
+    }
+
     public IReadOnlyList<string> OpenForConversion()
     {
         var dialog = new OpenFileDialog

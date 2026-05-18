@@ -75,6 +75,11 @@ public interface IFileDialogService
     /// Shows the Remove Protection dialog. Returns the entered password, or null if cancelled.
     /// </summary>
     string? ShowRemoveProtectionDialog();
+
+    /// <summary>
+    /// Shows a "Password Required" dialog for opening a protected PDF. Returns the entered password, or null if cancelled.
+    /// </summary>
+    string? ShowOpenPasswordDialog();
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
