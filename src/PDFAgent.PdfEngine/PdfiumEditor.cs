@@ -1235,4 +1235,95 @@ public sealed class PdfiumEditor : IPdfEditor
         }
         yield return remaining;
     }
+
+    // ── Extract images ────────────────────────────────────────────────────────
+
+    public async Task<OperationResult> ExtractImagesAsync(
+        string inputPath,
+        string outputFolder,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                Directory.CreateDirectory(outputFolder);
+
+                using var doc = UglyToad.PdfPig.PdfDocument.Open(inputPath);
+                var pageCount = doc.NumberOfPages;
+                var saved     = 0;
+                var seen      = new HashSet<string>(); // dedup by MD5
+
+                for (var pageNum = 1; pageNum <= pageCount; pageNum++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    progress?.Report((double)(pageNum - 1) / pageCount);
+
+                    var page   = doc.GetPage(pageNum);
+                    var imgIdx = 0;
+
+                    foreach (var img in page.GetImages())
+                    {
+                        // Skip masks and thumbnails — not meaningful standalone images
+                        if (img.IsImageMask) continue;
+                        if (img.WidthInSamples < 32 || img.HeightInSamples < 32) continue;
+
+                        var raw = img.RawBytes.ToArray();
+                        if (raw.Length == 0) continue;
+
+                        // Dedup: same raw bytes = same image XObject referenced multiple times
+                        var hash = ComputeMd5Hex(raw);
+                        if (!seen.Add(hash)) continue;
+
+                        string ext;
+                        byte[] saveBytes;
+
+                        if (IsJpegBytes(raw))
+                        {
+                            // DCT-encoded — raw bytes are a valid JPEG file
+                            ext       = "jpg";
+                            saveBytes = raw;
+                        }
+                        else if (img.TryGetPng(out var pngBytes) && pngBytes is { Length: > 0 })
+                        {
+                            ext       = "png";
+                            saveBytes = pngBytes;
+                        }
+                        else
+                        {
+                            // Cannot decode (e.g. JPX/JBIG2 without a decoder) — skip
+                            continue;
+                        }
+
+                        imgIdx++;
+                        var name    = $"image_p{pageNum:D3}_{imgIdx:D2}.{ext}";
+                        var outPath = Path.Combine(outputFolder, name);
+                        File.WriteAllBytes(outPath, saveBytes);
+                        saved++;
+                    }
+                }
+
+                progress?.Report(1.0);
+
+                return saved == 0
+                    ? OperationResult.Fail("No extractable images were found in this PDF.")
+                    : OperationResult.Ok($"{saved} image{(saved == 1 ? "" : "s")} extracted");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ExtractImages failed for {Path}", inputPath);
+                return OperationResult.Fail($"Extract failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
+    private static bool IsJpegBytes(byte[] data) =>
+        data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
+
+    private static string ComputeMd5Hex(byte[] data)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        return Convert.ToHexString(md5.ComputeHash(data));
+    }
 }

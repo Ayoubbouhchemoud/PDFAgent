@@ -67,6 +67,19 @@ public interface IPdfEditor
         string outputPath,
         IProgress<double>? progress = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Extract all embedded raster images from a PDF and save each to
+    /// <paramref name="outputFolder"/> as JPEG (for DCT-encoded images) or PNG.
+    /// Image masks and images smaller than 32×32 px are skipped.
+    /// Duplicate images (same raw bytes) are written only once.
+    /// Returns a failure result if no extractable images are found.
+    /// </summary>
+    Task<OperationResult> ExtractImagesAsync(
+        string inputPath,
+        string outputFolder,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default);
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }

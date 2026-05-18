@@ -963,6 +963,51 @@ public sealed partial class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
+    // ── Extract images from PDF ───────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ExtractImagesAsync()
+    {
+        var outputFolder = _fileDialog.SelectFolder();
+        if (outputFolder == null) return;
+
+        IsBusy = true;
+        StatusText = "Extracting images…";
+        try
+        {
+            var progress = new Progress<double>(p =>
+                StatusText = $"Extracting images… {p:P0}");
+
+            var result = await _pdfEditor.ExtractImagesAsync(
+                _pdfEngine.FilePath, outputFolder, progress);
+
+            if (result.IsSuccess)
+            {
+                StatusText = $"{result.Message} → {Path.GetFileName(outputFolder)}";
+                var open = System.Windows.MessageBox.Show(
+                    $"{result.Message}\n\nOpen the output folder?",
+                    "Images Extracted",
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Information);
+                if (open == System.Windows.MessageBoxResult.Yes)
+                    System.Diagnostics.Process.Start("explorer.exe", outputFolder);
+            }
+            else
+            {
+                StatusText = $"Extract images failed: {result.Message}";
+                System.Windows.MessageBox.Show(result.Message,
+                    "Extract Images", System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ExtractImages failed");
+            StatusText = $"Extract images error: {ex.Message}";
+        }
+        finally { IsBusy = false; }
+    }
+
     private static void ShowConvertSuccess(string message, string path, bool isFolder = false)
     {
         var choice = System.Windows.MessageBox.Show(

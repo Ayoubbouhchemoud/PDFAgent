@@ -199,6 +199,11 @@
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    VerticalAlignment="Center" />
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ExtractImagesCommand}" ToolTip="Extract embedded images from PDF — saves each image as JPEG or PNG">
+                        <TextBlock Text="🖼" FontSize="13"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center" />
+                    </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding UndoCommand}" ToolTip="Undo last operation (Ctrl+Z)">
                         <TextBlock Text="↩" FontSize="15"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
