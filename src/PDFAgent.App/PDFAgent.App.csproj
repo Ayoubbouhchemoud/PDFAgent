@@ -13,7 +13,6 @@
     <SelfContained>false</SelfContained>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="PDFAgent.ico" />
     <Resource Include="pdfAgent.png" />
   </ItemGroup>
   <ItemGroup>
@@ -85,6 +84,12 @@
       Retries="2"
       ContinueOnError="WarnAndContinue" />
     <Message Text="[OCR] Downloaded eng.traineddata → $(OutputPath)tessdata" Importance="high" />
+  </Target>
+
+  <!-- Inject custom icon into the apphost exe after every build -->
+  <Target Name="InjectAppIcon" AfterTargets="Build">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\inject-icon.ps1&quot; -ExePath &quot;$(OutputPath)PDFAgent.exe&quot; -IcoPath &quot;$(MSBuildProjectDirectory)\PDFAgent.ico&quot;"
+          ContinueOnError="WarnAndContinue" />
   </Target>
 
   <Target Name="CopyPdfiumDll" AfterTargets="Build">
