@@ -625,9 +625,10 @@ public sealed partial class MainViewModel : ObservableObject
             { Owner = System.Windows.Application.Current.MainWindow };
         if (dlg.ShowDialog() != true) return;
 
-        var newOrder = dlg.NewOrder;
+        var newOrder     = dlg.NewOrder;
+        var deletedCount = TotalPages - newOrder.Count;
 
-        // Skip if order is unchanged
+        // Skip if order is unchanged and no pages were deleted
         if (newOrder.Count == TotalPages &&
             newOrder.Select((origIdx, pos) => origIdx == pos).All(v => v))
         {
@@ -640,7 +641,7 @@ public sealed partial class MainViewModel : ObservableObject
         string? failStatus = null;
 
         IsBusy = true;
-        StatusText = "Sorting pages…";
+        StatusText = deletedCount > 0 ? $"Applying sort and deleting {deletedCount} page(s)…" : "Sorting pages…";
         try
         {
             undoSnap = MakeUndoSnapshot();
@@ -651,7 +652,9 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 _undoStack.Push(undoSnap);
                 undoSnap = null;
-                StatusText = $"Pages sorted — {result.Message}";
+                StatusText = deletedCount > 0
+                    ? $"Done — {deletedCount} page{(deletedCount == 1 ? "" : "s")} deleted, {newOrder.Count} page{(newOrder.Count == 1 ? "" : "s")} remaining"
+                    : $"Pages sorted — {newOrder.Count} page{(newOrder.Count == 1 ? "" : "s")}";
             }
             else
             {

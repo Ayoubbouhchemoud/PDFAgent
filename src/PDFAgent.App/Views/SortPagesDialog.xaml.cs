@@ -53,14 +53,19 @@ public partial class SortPagesDialog : Window
             Items.Add(new SortPageItem { OriginalIndex = origIdx, Thumbnail = thumb });
 
         RenumberItems();
-        var count = Items.Count;
-        SubtitleLabel.Text = $"{count} page{(count == 1 ? "" : "s")} — drag thumbnails to reorder, or use Quick Sort";
+        UpdateSubtitle();
     }
 
     private void RenumberItems()
     {
         for (var i = 0; i < Items.Count; i++)
             Items[i].Position = i + 1;
+    }
+
+    private void UpdateSubtitle()
+    {
+        var count = Items.Count;
+        SubtitleLabel.Text = $"{count} page{(count == 1 ? "" : "s")} — drag thumbnails to reorder or delete, or use Quick Sort";
     }
 
     private void ClearDropHighlights()
@@ -200,6 +205,17 @@ public partial class SortPagesDialog : Window
             dep = VisualTreeHelper.GetParent(dep);
         }
         return null;
+    }
+
+    // ── Delete page ───────────────────────────────────────────────────────────
+
+    private void DeletePage_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true; // prevent drag from starting on button click
+        if ((sender as Button)?.DataContext is not SortPageItem item) return;
+        Items.Remove(item);
+        RenumberItems();
+        UpdateSubtitle();
     }
 
     // ── Buttons ───────────────────────────────────────────────────────────────
