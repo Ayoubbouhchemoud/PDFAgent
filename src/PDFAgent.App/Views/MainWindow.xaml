@@ -20,6 +20,7 @@
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Ctrl" Command="{Binding UndoCommand}" />
         <KeyBinding Key="E" Modifiers="Ctrl" Command="{Binding ToggleTextEditModeCommand}" />
+        <KeyBinding Key="D" Modifiers="Ctrl" Command="{Binding DrawOnPageCommand}" />
         <KeyBinding Key="F" Modifiers="Ctrl" Command="{Binding OpenSearchCommand}" />
     </Window.InputBindings>
 
@@ -138,6 +139,12 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding DrawOnPageCommand}"
+                            ToolTip="Draw on PDF — freehand pen, highlighter, eraser (Ctrl+D)">
+                        <TextBlock Text="✏" FontSize="15"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center"/>
                     </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" />

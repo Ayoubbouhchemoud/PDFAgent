@@ -59,6 +59,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ConvertToPdfCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConvertFromPdfCommand))]
     [NotifyCanExecuteChangedFor(nameof(SortPagesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DrawOnPageCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -1530,6 +1531,84 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanApplyTextEdits))]
     private Task ApplyTextEditsAsync() => Task.CompletedTask;
+
+    // ── Draw on page ─────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task DrawOnPageAsync()
+    {
+        // Opens the DrawingDialog — freehand ink overlay on each page.
+        // Confirmed strokes are baked as vector paths in one atomic PdfSharp pass.
+        var path = _pdfEngine.FilePath;
+
+        var dialog = new Views.DrawingDialog(_pdfEngine, TotalPages)
+        {
+            Owner = System.Windows.Application.Current.MainWindow,
+        };
+
+        if (dialog.ShowDialog() != true || dialog.CollectedStrokes.Count == 0)
+        {
+            StatusText = $"{DocumentInfo?.FileName} — {TotalPages} page(s)";
+            return;
+        }
+
+        var strokes = dialog.CollectedStrokes;
+        IsBusy     = true;
+        StatusText = $"Baking {strokes.Count} ink stroke(s)…";
+
+        var tmp      = Path.GetTempFileName();
+        string? undoSnap  = null;
+        string? failStatus = null;
+
+        try
+        {
+            undoSnap = MakeUndoSnapshot();
+            await _pdfEngine.CloseAsync();
+
+            var result = await _pdfEditor.BakeDrawingsAsync(path, tmp, strokes);
+            if (result.IsSuccess)
+            {
+                File.Move(tmp, path, overwrite: true);
+                tmp = null;
+                _undoStack.Push(undoSnap);
+                undoSnap = null;
+                UndoCommand.NotifyCanExecuteChanged();
+            }
+            else
+            {
+                failStatus = $"Drawing bake failed: {result.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "DrawOnPage bake failed");
+            failStatus = $"Drawing error: {ex.Message}";
+        }
+        finally
+        {
+            try { if (undoSnap != null && File.Exists(undoSnap)) File.Delete(undoSnap); } catch { }
+            if (tmp != null && File.Exists(tmp)) File.Delete(tmp);
+
+            _renderCts.Cancel();
+            _renderCts = new CancellationTokenSource();
+            var ct = _renderCts.Token;
+            try
+            {
+                var reopen = await _pdfEngine.OpenAsync(path, ct: ct);
+                if (reopen.IsSuccess && reopen.Value != null)
+                {
+                    DocumentInfo = reopen.Value;
+                    TotalPages   = reopen.Value.PageCount;
+                    await LoadThumbnailsAsync(ct);
+                    await RenderCurrentPagesAsync(ct, finalStatus: failStatus);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _logger.LogError(ex, "Reopen after drawing bake failed"); }
+
+            IsBusy = false;
+        }
+    }
 
     // ── Rendering ───────────────────────────────────────────────────────────
 

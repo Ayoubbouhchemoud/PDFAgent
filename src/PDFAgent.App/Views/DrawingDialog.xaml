@@ -1,0 +1,213 @@
+<Window x:Class="PDFAgent.App.Views.DrawingDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Draw on PDF"
+        Width="980" Height="780"
+        MinWidth="640" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        FontFamily="{DynamicResource BodyFont}"
+        TextOptions.TextFormattingMode="Ideal"
+        UseLayoutRounding="True"
+        Loaded="Window_Loaded">
+
+    <Window.InputBindings>
+        <KeyBinding Key="Z" Modifiers="Ctrl" Command="{Binding}" CommandParameter="undo"
+                    CommandTarget="{Binding ElementName=UndoBtn}"/>
+    </Window.InputBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ── Header ── -->
+        <Grid Grid.Row="0" Margin="20,14,20,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Draw on PDF"
+                           FontSize="18" FontWeight="SemiBold"
+                           Foreground="{DynamicResource OnSurfaceBrush}"/>
+                <TextBlock Text="Freehand drawing is baked directly into the PDF as vector ink."
+                           FontSize="12"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <!-- Page navigation -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="PrevBtn"
+                        Content="◀"
+                        Width="32" Height="32"
+                        Style="{StaticResource OutlinedButton}"
+                        Click="Prev_Click"
+                        IsEnabled="False"
+                        Margin="0,0,4,0"/>
+                <TextBlock x:Name="PageLabel"
+                           VerticalAlignment="Center"
+                           FontSize="13"
+                           Foreground="{DynamicResource OnSurfaceBrush}"
+                           MinWidth="80" TextAlignment="Center"/>
+                <Button x:Name="NextBtn"
+                        Content="▶"
+                        Width="32" Height="32"
+                        Style="{StaticResource OutlinedButton}"
+                        Click="Next_Click"
+                        IsEnabled="False"
+                        Margin="4,0,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ── Drawing toolbar ── -->
+        <Border Grid.Row="1"
+                Background="{DynamicResource SurfaceVariantBrush}"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
+                BorderThickness="0,1,0,1"
+                Padding="14,8">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+
+                <!-- Tool mode -->
+                <TextBlock Text="Tool:" VerticalAlignment="Center"
+                           FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,6,0"/>
+                <Border x:Name="PenBtnBorder" CornerRadius="4"
+                        BorderBrush="{DynamicResource PrimaryBrush}" BorderThickness="2"
+                        Margin="0,0,4,0">
+                    <Button x:Name="PenBtn" Content="✏ Pen"
+                            Width="72" Height="28" FontSize="12"
+                            Click="PenBtn_Click" Tag="pen"/>
+                </Border>
+                <Border x:Name="HighlightBtnBorder" CornerRadius="4"
+                        BorderBrush="Transparent" BorderThickness="2"
+                        Margin="0,0,4,0">
+                    <Button x:Name="HighlightBtn" Content="▬ Highlight"
+                            Width="88" Height="28" FontSize="12"
+                            Click="HighlightBtn_Click" Tag="highlight"/>
+                </Border>
+                <Border x:Name="EraserBtnBorder" CornerRadius="4"
+                        BorderBrush="Transparent" BorderThickness="2"
+                        Margin="0,0,0,0">
+                    <Button x:Name="EraserBtn" Content="◻ Erase"
+                            Width="72" Height="28" FontSize="12"
+                            Click="EraserBtn_Click" Tag="erase"/>
+                </Border>
+
+                <!-- Separator -->
+                <Separator Width="1" Height="28" Margin="10,0"
+                           Background="{DynamicResource OutlineVariantBrush}"/>
+
+                <!-- Color palette -->
+                <TextBlock Text="Color:" VerticalAlignment="Center"
+                           FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,6,0"/>
+                <ItemsControl x:Name="ColorPalette">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+
+                <!-- Separator -->
+                <Separator Width="1" Height="28" Margin="10,0"
+                           Background="{DynamicResource OutlineVariantBrush}"/>
+
+                <!-- Thickness -->
+                <TextBlock Text="Size:" VerticalAlignment="Center"
+                           FontSize="12" Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           Margin="0,0,6,0"/>
+                <ItemsControl x:Name="ThicknessPalette">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+
+                <!-- Separator -->
+                <Separator Width="1" Height="28" Margin="10,0"
+                           Background="{DynamicResource OutlineVariantBrush}"/>
+
+                <!-- Actions -->
+                <Button x:Name="UndoBtn" Content="↩ Undo"
+                        Width="70" Height="28" FontSize="12"
+                        Style="{StaticResource OutlinedButton}"
+                        Click="Undo_Click"
+                        Margin="0,0,6,0"/>
+                <Button Content="✕ Clear page"
+                        Width="90" Height="28" FontSize="12"
+                        Style="{StaticResource OutlinedButton}"
+                        Click="ClearPage_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Drawing canvas area ── -->
+        <ScrollViewer Grid.Row="2"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto"
+                      Background="{DynamicResource SurfaceVariantBrush}"
+                      Padding="24">
+            <Grid HorizontalAlignment="Center" VerticalAlignment="Top">
+                <TextBlock x:Name="LoadingLabel"
+                           Text="Loading page…"
+                           FontSize="14"
+                           Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Margin="40"/>
+
+                <Grid x:Name="PageContainer" Visibility="Hidden">
+                    <Image x:Name="PageImage"
+                           Stretch="None"
+                           HorizontalAlignment="Left" VerticalAlignment="Top"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <!-- Drawing surface — receives mouse events -->
+                    <Canvas x:Name="DrawCanvas"
+                            HorizontalAlignment="Left" VerticalAlignment="Top"
+                            Background="Transparent"
+                            Cursor="Cross"
+                            MouseLeftButtonDown="DrawCanvas_MouseDown"
+                            MouseMove="DrawCanvas_MouseMove"
+                            MouseLeftButtonUp="DrawCanvas_MouseUp"
+                            MouseLeave="DrawCanvas_MouseLeave"/>
+                </Grid>
+            </Grid>
+        </ScrollViewer>
+
+        <!-- ── Status bar ── -->
+        <Border Grid.Row="3"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource OutlineVariantBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="20,6">
+            <TextBlock x:Name="StatusLabel"
+                       FontSize="12"
+                       Foreground="{DynamicResource OnSurfaceVariantBrush}"/>
+        </Border>
+
+        <!-- ── Footer ── -->
+        <Grid Grid.Row="4" Margin="20,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel"
+                        Style="{StaticResource OutlinedButton}"
+                        Width="90" Margin="0,0,8,0"
+                        IsCancel="True"
+                        Click="Cancel_Click"/>
+                <Button x:Name="ApplyBtn"
+                        Content="Apply Drawings"
+                        Style="{StaticResource FilledButton}"
+                        Width="130"
+                        IsDefault="True"
+                        Click="Apply_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

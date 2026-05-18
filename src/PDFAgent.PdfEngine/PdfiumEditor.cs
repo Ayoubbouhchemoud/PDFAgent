@@ -622,6 +622,72 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    public async Task<OperationResult> BakeDrawingsAsync(
+        string filePath, string outputPath,
+        IReadOnlyList<PDFAgent.Core.Models.DrawingStroke> strokes,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var input  = PdfReader.Open(filePath, PdfDocumentOpenMode.Import);
+                using var output = new PdfDocument();
+
+                var byPage = strokes
+                    .Where(s => s.Points.Count >= 1)
+                    .GroupBy(s => s.PageNumber - 1)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                for (var i = 0; i < input.PageCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var page = output.AddPage(input.Pages[i]);
+                    if (!byPage.TryGetValue(i, out var pageStrokes)) continue;
+
+                    using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+
+                    foreach (var stroke in pageStrokes)
+                    {
+                        var color = XColor.FromArgb(stroke.A, stroke.R, stroke.G, stroke.B);
+                        var pen   = new XPen(color, Math.Max(stroke.Thickness, 0.5))
+                        {
+                            LineCap  = XLineCap.Round,
+                            LineJoin = XLineJoin.Round,
+                        };
+
+                        if (stroke.Points.Count == 1)
+                        {
+                            // Single-point tap: draw a small filled circle
+                            var p = stroke.Points[0];
+                            double r = stroke.Thickness / 2.0;
+                            gfx.DrawEllipse(new XSolidBrush(color),
+                                p.X - r, p.Y - r, r * 2, r * 2);
+                            continue;
+                        }
+
+                        // Multi-point: draw as a smooth polyline path
+                        var path  = new XGraphicsPath();
+                        var xpts  = stroke.Points
+                            .Select(p => new XPoint(p.X, p.Y))
+                            .ToArray();
+                        path.AddLines(xpts);
+                        gfx.DrawPath(pen, path);
+                    }
+                }
+
+                output.Save(outputPath);
+                _logger.LogInformation("BakeDrawings {Count} strokes → {Output}", strokes.Count, outputPath);
+                return OperationResult.Ok($"Applied {strokes.Count} ink stroke(s)");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "BakeDrawings failed");
+                return OperationResult.Fail($"Drawing bake failed: {ex.Message}");
+            }
+        }, ct);
+    }
+
     private static XFont CreateEditFont(string? rawName, double fontSize, bool bold, bool italic)
     {
         var size  = Math.Max(fontSize, 6);

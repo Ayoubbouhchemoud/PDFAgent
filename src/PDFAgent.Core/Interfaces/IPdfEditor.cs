@@ -17,6 +17,9 @@ public interface IPdfEditor
     Task<OperationResult> AddSignatureImageAsync(string filePath, string outputPath, SignatureOverlayOptions opts, CancellationToken ct = default);
     Task<OperationResult> BakeTextAnnotationsAsync(string filePath, string outputPath, IReadOnlyList<TextAnnotationRecord> annotations, CancellationToken ct = default);
     Task<OperationResult> BakeTextEditsAsync(string filePath, string outputPath, IReadOnlyList<TextEditRecord> edits, CancellationToken ct = default);
+
+    /// <summary>Bake freehand ink strokes permanently into the PDF.</summary>
+    Task<OperationResult> BakeDrawingsAsync(string filePath, string outputPath, IReadOnlyList<DrawingStroke> strokes, CancellationToken ct = default);
     Task<OperationResult> AddBlankPageAsync(string filePath, string outputPath, int insertAtIndex, double widthPts, double heightPts, CancellationToken ct = default);
 
     /// <summary>
