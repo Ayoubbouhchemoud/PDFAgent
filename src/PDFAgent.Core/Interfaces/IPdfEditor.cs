@@ -20,6 +20,13 @@ public interface IPdfEditor
 
     /// <summary>Bake freehand ink strokes permanently into the PDF.</summary>
     Task<OperationResult> BakeDrawingsAsync(string filePath, string outputPath, IReadOnlyList<DrawingStroke> strokes, CancellationToken ct = default);
+
+    /// <summary>
+    /// Apply password protection and permission restrictions.
+    /// Output is always a new file; the source is never modified.
+    /// All page content, fonts, images, links, and metadata are preserved exactly.
+    /// </summary>
+    Task<OperationResult> ProtectAsync(string inputPath, string outputPath, ProtectOptions opts, CancellationToken ct = default);
     Task<OperationResult> AddBlankPageAsync(string filePath, string outputPath, int insertAtIndex, double widthPts, double heightPts, CancellationToken ct = default);
 
     /// <summary>

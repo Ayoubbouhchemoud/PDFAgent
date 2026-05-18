@@ -60,6 +60,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ConvertFromPdfCommand))]
     [NotifyCanExecuteChangedFor(nameof(SortPagesCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrawOnPageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ProtectPdfCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -1606,6 +1607,42 @@ public sealed partial class MainViewModel : ObservableObject
             catch (OperationCanceledException) { }
             catch (Exception ex) { _logger.LogError(ex, "Reopen after drawing bake failed"); }
 
+            IsBusy = false;
+        }
+    }
+
+    // ── Protect PDF ──────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task ProtectPdfAsync()
+    {
+        // 1. Collect protection settings from dialog (modal, no file closed yet).
+        var opts = _fileDialog.ShowSecurePdfDialog();
+        if (opts == null) return;
+
+        // 2. Ask where to save the protected copy.
+        var defaultName = Path.GetFileNameWithoutExtension(_pdfEngine.FilePath) + "_protected.pdf";
+        var outputPath  = _fileDialog.SavePdf(defaultName);
+        if (string.IsNullOrEmpty(outputPath)) return;
+
+        IsBusy     = true;
+        StatusText = "Applying password protection…";
+
+        try
+        {
+            var result = await _pdfEditor.ProtectAsync(_pdfEngine.FilePath, outputPath, opts);
+
+            StatusText = result.IsSuccess
+                ? $"Protected PDF saved → {Path.GetFileName(outputPath)}"
+                : $"Protection failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ProtectPdf failed");
+            StatusText = $"Protection error: {ex.Message}";
+        }
+        finally
+        {
             IsBusy = false;
         }
     }

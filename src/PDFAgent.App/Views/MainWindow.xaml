@@ -5,7 +5,7 @@
         xmlns:converters="clr-namespace:PDFAgent.App.Converters"
         xmlns:local="clr-namespace:PDFAgent.App.Views"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="PDF Professional" Height="900" Width="1400"
+        Title="PDF Professional" Icon="PDFAgent.ico" Height="900" Width="1400"
         WindowState="Maximized"
         Background="{DynamicResource SurfaceBrush}"
         FontFamily="{DynamicResource BodyFont}"
@@ -143,6 +143,12 @@
                     <Button Style="{StaticResource IconButton}" Command="{Binding DrawOnPageCommand}"
                             ToolTip="Draw on PDF — freehand pen, highlighter, eraser (Ctrl+D)">
                         <TextBlock Text="✏" FontSize="15"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ProtectPdfCommand}"
+                            ToolTip="Protect PDF — password protection and permission restrictions">
+                        <TextBlock Text="🔒" FontSize="13"
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    VerticalAlignment="Center"/>
                     </Button>
@@ -495,7 +501,8 @@
                                 Style="{StaticResource FilledButton}"
                                 Command="{Binding OpenFileCommand}"
                                 HorizontalAlignment="Center"
-                                Padding="24,0" />
+                                Height="50" Width="140"
+                                Padding="24,0" Margin="10" />
                     </StackPanel>
 
                 </Grid>

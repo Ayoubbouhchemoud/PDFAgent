@@ -6,11 +6,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>PDFAgent.ico</ApplicationIcon>
     <AssemblyName>PDFAgent</AssemblyName>
     <RootNamespace>PDFAgent.App</RootNamespace>
 <PlatformTarget>x64</PlatformTarget>
     <SelfContained>false</SelfContained>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="PDFAgent.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\PDFAgent.Core\PDFAgent.Core.csproj" />
     <ProjectReference Include="..\PDFAgent.PdfEngine\PDFAgent.PdfEngine.csproj" />

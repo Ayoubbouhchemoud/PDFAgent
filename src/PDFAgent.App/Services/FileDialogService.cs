@@ -275,12 +275,10 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
-    public SecurePdfDialogResult? ShowSecurePdfDialog()
+    public PDFAgent.Core.Models.ProtectOptions? ShowSecurePdfDialog()
     {
         var dialog = new Views.SecurePdfDialog { Owner = Application.Current.MainWindow };
-        return dialog.ShowDialog() == true
-            ? new SecurePdfDialogResult(dialog.UserPassword, dialog.OwnerPassword)
-            : null;
+        return dialog.ShowDialog() == true ? dialog.Options : null;
     }
 
     public IReadOnlyList<string> OpenForConversion()

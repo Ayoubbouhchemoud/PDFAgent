@@ -68,11 +68,9 @@ public interface IFileDialogService
     /// <summary>Shows a save dialog for a plain-text file.</summary>
     string? SaveTxtFile(string defaultName);
 
-    /// <summary>Shows the Secure PDF password dialog. Returns null if cancelled.</summary>
-    SecurePdfDialogResult? ShowSecurePdfDialog();
+    /// <summary>Shows the Protect PDF dialog. Returns null if cancelled.</summary>
+    PDFAgent.Core.Models.ProtectOptions? ShowSecurePdfDialog();
 }
-
-public sealed record SecurePdfDialogResult(string? UserPassword, string? OwnerPassword);
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
 public sealed record RotateDialogResult(
