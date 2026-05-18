@@ -56,6 +56,18 @@ internal static class PdfiumTextNative
     [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern double FPDFText_GetFontSize(IntPtr textPage, int index);
 
+    // FPDFText_GetFontInfo: returns required buffer length (including NUL), or 0 on failure.
+    // flags receives PDF font descriptor bits: bit 6 (0x40) = Italic, bit 18 (0x40000) = ForceBold.
+    // This export did not exist in very old PDFium builds; we guard with _fontInfoAvailable.
+    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern uint FPDFText_GetFontInfo(
+        IntPtr textPage, int index,
+        [Out] byte[]? buffer, uint bufLen,
+        out int flags);
+
+    private static volatile bool _fontInfoChecked;
+    private static volatile bool _fontInfoAvailable;
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -101,7 +113,7 @@ internal static class PdfiumTextNative
         var count = FPDFText_CountChars(textPage);
         if (count <= 0) return Array.Empty<PdfTextSegment>();
 
-        // Gather all characters with their boxes in a single pass
+        // Gather all characters with their boxes and font index in a single pass
         var chars = new List<CharInfo>(count);
         for (var i = 0; i < count; i++)
         {
@@ -115,12 +127,12 @@ internal static class PdfiumTextNative
             // Skip zero-size boxes (invisible/space glyphs that have no real extent)
             if (right - left < 0.01 && top - bottom < 0.01 && char.IsWhiteSpace(c))
             {
-                chars.Add(new CharInfo(c, left, right, bottom, top, 0));
+                chars.Add(new CharInfo(c, left, right, bottom, top, 0, i));
                 continue;
             }
 
             chars.Add(new CharInfo(c, left, right, bottom, top,
-                FPDFText_GetFontSize(textPage, i)));
+                FPDFText_GetFontSize(textPage, i), i));
         }
 
         // Group consecutive non-whitespace characters into words
@@ -156,6 +168,9 @@ internal static class PdfiumTextNative
             var pdfWidth  = Math.Max(maxRight - minLeft, 1);
             var pdfHeight = Math.Max(maxTop - minBottom, 1);
 
+            // Extract font info from the first non-whitespace char of the word
+            TryGetFontInfo(textPage, span[0].CharIndex, out var fontName, out var isBold, out var isItalic);
+
             words.Add(new PdfTextSegment
             {
                 Text         = text,
@@ -164,6 +179,9 @@ internal static class PdfiumTextNative
                 Width        = pdfWidth,
                 Height       = pdfHeight,
                 FontSize     = avgFont,
+                FontName     = fontName,
+                IsBold       = isBold,
+                IsItalic     = isItalic,
                 PageNumber   = pageNumber,
                 SegmentIndex = segIdx++,
             });
@@ -174,6 +192,53 @@ internal static class PdfiumTextNative
         return words;
     }
 
+    private static bool TryGetFontInfo(IntPtr textPage, int charIndex,
+        out string? fontName, out bool isBold, out bool isItalic)
+    {
+        fontName = null; isBold = false; isItalic = false;
+
+        if (_fontInfoChecked && !_fontInfoAvailable)
+            return false;
+
+        try
+        {
+            var needed = FPDFText_GetFontInfo(textPage, charIndex, null, 0, out var flags);
+            _fontInfoChecked = true;
+            _fontInfoAvailable = true;
+
+            if (needed > 1) // needed includes NUL terminator
+            {
+                var buf = new byte[needed];
+                FPDFText_GetFontInfo(textPage, charIndex, buf, needed, out flags);
+                fontName = System.Text.Encoding.UTF8.GetString(buf, 0, (int)needed - 1);
+            }
+
+            // PDF font descriptor flags (PDF spec): bit 7 (0x40) = Italic, bit 19 (0x40000) = ForceBold
+            isBold   = (flags & 0x40000) != 0;
+            isItalic = (flags & 0x40) != 0;
+
+            // Also detect from font name as a safety net
+            if (fontName != null)
+            {
+                var n = fontName.ToLowerInvariant();
+                if (!isBold)   isBold   = n.Contains("bold");
+                if (!isItalic) isItalic = n.Contains("italic") || n.Contains("oblique");
+            }
+
+            return true;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            _fontInfoChecked  = true;
+            _fontInfoAvailable = false;
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private readonly record struct CharInfo(
-        char Ch, double Left, double Right, double Bottom, double Top, double FontSize);
+        char Ch, double Left, double Right, double Bottom, double Top, double FontSize, int CharIndex);
 }

@@ -23,8 +23,11 @@ public sealed partial class TextEditWordViewModel : ObservableObject
 
     // ── Content ───────────────────────────────────────────────────────────────
 
-    public string OriginalText { get; init; } = "";
-    public double FontSize     { get; init; }
+    public string  OriginalText { get; init; } = "";
+    public double  FontSize     { get; init; }
+    public string? FontName     { get; init; }
+    public bool    IsBold       { get; init; }
+    public bool    IsItalic     { get; init; }
 
     [ObservableProperty]
     private string _editedText = "";

@@ -598,13 +598,14 @@ public sealed class PdfiumEditor : IPdfEditor
                     {
                         if (string.IsNullOrWhiteSpace(edit.NewText)) continue;
 
-                        // White-out the original word area; extend width to accommodate longer text
-                        var whiteoutRect = new XRect(edit.X, edit.Y, edit.Width * 2.5, edit.Height * 1.2);
-                        gfx.DrawRectangle(XBrushes.White, whiteoutRect);
+                        // Cover exactly the original glyph bounding box (1 pt margin on all sides
+                        // to absorb any sub-pixel rounding in the PDFium coordinates).
+                        var whiteout = new XRect(edit.X - 1, edit.Y - 1, edit.Width + 2, edit.Height + 2);
+                        gfx.DrawRectangle(XBrushes.White, whiteout);
 
-                        // Draw the replacement text
-                        var font     = new XFont("Arial", Math.Max(edit.FontSize, 6), XFontStyleEx.Regular);
-                        var textRect = new XRect(edit.X, edit.Y, page.Width.Point - edit.X, edit.Height * 1.5);
+                        // Recreate the font as close as possible to the original.
+                        var font = CreateEditFont(edit.FontName, edit.FontSize, edit.IsBold, edit.IsItalic);
+                        var textRect = new XRect(edit.X, edit.Y, page.Width.Point - edit.X, edit.Height + 4);
                         gfx.DrawString(edit.NewText, font, XBrushes.Black, textRect, XStringFormats.TopLeft);
                     }
                 }
@@ -619,6 +620,59 @@ public sealed class PdfiumEditor : IPdfEditor
                 return OperationResult.Fail($"Text edit bake failed: {ex.Message}");
             }
         }, ct);
+    }
+
+    private static XFont CreateEditFont(string? rawName, double fontSize, bool bold, bool italic)
+    {
+        var size  = Math.Max(fontSize, 6);
+        var style = bold && italic ? XFontStyleEx.BoldItalic
+                  : bold          ? XFontStyleEx.Bold
+                  : italic        ? XFontStyleEx.Italic
+                                  : XFontStyleEx.Regular;
+
+        var family = CleanFontFamily(rawName, ref bold, ref italic);
+
+        try { return new XFont(family, size, style); }
+        catch
+        {
+            try { return new XFont("Arial", size, style); }
+            catch { return new XFont("Arial", size, XFontStyleEx.Regular); }
+        }
+    }
+
+    private static string CleanFontFamily(string? raw, ref bool bold, ref bool italic)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "Arial";
+
+        // Strip PDF subset prefix "XXXXXX+FontName"
+        var idx = raw.IndexOf('+');
+        var name = idx >= 0 ? raw[(idx + 1)..] : raw;
+
+        // Detect style modifiers embedded in the name
+        var lower = name.ToLowerInvariant();
+        if (lower.Contains("bold"))                             bold   = true;
+        if (lower.Contains("italic") || lower.Contains("oblique")) italic = true;
+
+        // Remove trailing style and foundry suffixes so we get a clean family name
+        name = System.Text.RegularExpressions.Regex.Replace(
+            name,
+            @"[,\-]?(BoldItalic|Bold|Italic|Oblique|Regular|Roman|Light|Thin|Medium|SemiBold|Black|Narrow|Condensed|MT|PS|PST)$",
+            "",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim(['-', ',', ' ']);
+
+        // Map common PDF logical font names to installed Windows font families
+        return name switch
+        {
+            "Helvetica"      => "Arial",
+            "CourierNew"     => "Courier New",
+            "Courier"        => "Courier New",
+            "TimesNewRoman"  => "Times New Roman",
+            "Times"          => "Times New Roman",
+            "Symbol"         => "Symbol",
+            "ZapfDingbats"   => "Wingdings",
+            _ when name.Length < 2 => "Arial",
+            _                => name,
+        };
     }
 
     public async Task<OperationResult> CompressAsync(
