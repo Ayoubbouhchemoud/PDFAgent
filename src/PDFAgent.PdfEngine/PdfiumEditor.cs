@@ -720,16 +720,36 @@ public sealed class PdfiumEditor : IPdfEditor
                 }
 
                 // Apply encryption.
-                // PdfSharp 6.1.1 enables RC4-128 automatically when a password is set.
-                // Explicitly selecting AES-256 requires accessing an internal handler;
-                // for now we rely on the library default and preserve the UI option for future use.
+                // PdfSharp 6.1.1 requires SetEncryption() on the PdfStandardSecurityHandler
+                // to actually enable encryption — setting passwords alone is not enough.
+                // SecurityHandler is internal, so we access it via reflection.
                 var sec = output.SecuritySettings;
 
-                // Passwords — PdfSharp requires OwnerPassword when encryption is enabled.
-                // If the caller supplied none, generate a random one so the library is happy
-                // but permission flags (not the password) are the primary restriction.
+                var handlerProp = sec.GetType().GetProperty(
+                    "SecurityHandler",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public   |
+                    System.Reflection.BindingFlags.NonPublic);
+                var handler = handlerProp?.GetValue(sec);
+                if (handler != null)
+                {
+                    var encLevel = opts.Use256BitAes
+                        ? PdfDefaultEncryption.V5
+                        : PdfDefaultEncryption.V2With128Bits;
+                    handler.GetType()
+                        .GetMethod("SetEncryption", new[] { typeof(PdfDefaultEncryption) })
+                        ?.Invoke(handler, new object[] { encLevel });
+                }
+                else
+                {
+                    _logger.LogWarning("PdfSharp: SecurityHandler not accessible via reflection; encryption may not be applied");
+                }
+
+                // Passwords — must be set AFTER SetEncryption so PdfSharp picks them up.
+                // OwnerPassword is required; generate a random one when the caller omits it
+                // so that permission flags (not the password) are the primary restriction.
                 sec.OwnerPassword = string.IsNullOrEmpty(opts.OwnerPassword)
-                    ? Guid.NewGuid().ToString("N")   // invisible internal owner password
+                    ? Guid.NewGuid().ToString("N")
                     : opts.OwnerPassword;
 
                 if (!string.IsNullOrEmpty(opts.UserPassword))
