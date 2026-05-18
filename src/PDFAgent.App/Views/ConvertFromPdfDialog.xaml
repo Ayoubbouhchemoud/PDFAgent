@@ -40,13 +40,18 @@
             <RadioButton x:Name="DocxRadio"
                          Content="Word (.docx) — headings, bullets, code boxes"
                          FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"
+                         Margin="0,0,0,6"/>
+            <RadioButton x:Name="XlsxRadio"
+                         Content="Excel (.xlsx) — spreadsheet with tables and code blocks"
+                         FontSize="13"
                          Foreground="{DynamicResource OnSurfaceBrush}"/>
         </StackPanel>
 
         <TextBlock TextWrapping="Wrap" FontSize="12"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                    Margin="0,0,0,20">
-            Requires Python 3 with pdfplumber (HTML) or pdfplumber + python-docx (Word) installed.
+            Requires Python 3 with pdfplumber (HTML), pdfplumber + python-docx (Word), or pdfplumber + openpyxl (Excel).
         </TextBlock>
 
         <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,0,0,16"/>

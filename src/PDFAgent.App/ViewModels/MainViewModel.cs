@@ -877,15 +877,23 @@ public sealed partial class MainViewModel : ObservableObject
         var baseName = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
 
         // Collect the save path before entering IsBusy — dialogs need the window interactive.
-        var outputPath = format == ExportFormat.Docx
-            ? _fileDialog.SaveDocxFile($"{baseName}.docx")
-            : _fileDialog.SaveHtmlFile($"{baseName}.html");
+        var outputPath = format switch
+        {
+            ExportFormat.Docx => _fileDialog.SaveDocxFile($"{baseName}.docx"),
+            ExportFormat.Xlsx => _fileDialog.SaveXlsxFile($"{baseName}.xlsx"),
+            _                 => _fileDialog.SaveHtmlFile($"{baseName}.html"),
+        };
         if (outputPath == null) return;
 
         IsBusy = true;
         try
         {
-            string label = format == ExportFormat.Docx ? "Word document" : "HTML";
+            string label = format switch
+            {
+                ExportFormat.Docx => "Word document",
+                ExportFormat.Xlsx => "Excel workbook",
+                _                 => "HTML",
+            };
             StatusText = $"Exporting as {label}…";
             var result = await _pdfExporter.ExportAsync(
                 _pdfEngine.FilePath, outputPath, format);

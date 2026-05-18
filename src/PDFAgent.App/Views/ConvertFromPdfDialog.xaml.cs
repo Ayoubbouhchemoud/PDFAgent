@@ -6,7 +6,9 @@ namespace PDFAgent.App.Views;
 public partial class ConvertFromPdfDialog : Window
 {
     public ExportFormat SelectedFormat =>
-        DocxRadio.IsChecked == true ? ExportFormat.Docx : ExportFormat.Html;
+        DocxRadio.IsChecked == true ? ExportFormat.Docx :
+        XlsxRadio.IsChecked == true ? ExportFormat.Xlsx :
+        ExportFormat.Html;
 
     public ConvertFromPdfDialog(string fileName, int totalPages, int currentPage)
     {

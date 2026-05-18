@@ -34,7 +34,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         ExportFormat format,
         CancellationToken ct = default)
     {
-        if (format != ExportFormat.Html && format != ExportFormat.Docx)
+        if (format != ExportFormat.Html && format != ExportFormat.Docx && format != ExportFormat.Xlsx)
             return Task.FromResult(
                 OperationResult.Fail($"Format '{format}' is not yet implemented."));
 
@@ -44,7 +44,12 @@ public sealed class PdfToHtmlConverter : IPdfExporter
     private OperationResult RunPython(string inputPath, string outputPath,
         ExportFormat format, CancellationToken ct)
     {
-        string scriptName = format == ExportFormat.Docx ? "pdf_to_docx.py" : "pdf_to_html.py";
+        string scriptName = format switch
+        {
+            ExportFormat.Docx => "pdf_to_docx.py",
+            ExportFormat.Xlsx => "pdf_to_xlsx.py",
+            _                 => "pdf_to_html.py",
+        };
         string scriptPath = Path.Combine(AppContext.BaseDirectory, scriptName);
         if (!File.Exists(scriptPath))
             return OperationResult.Fail(
@@ -93,7 +98,12 @@ public sealed class PdfToHtmlConverter : IPdfExporter
 
                 if (proc.ExitCode == 0 && File.Exists(outputPath))
                 {
-                    string label = format == ExportFormat.Docx ? "DOCX" : "HTML";
+                    string label = format switch
+                    {
+                        ExportFormat.Docx => "DOCX",
+                        ExportFormat.Xlsx => "XLSX",
+                        _                 => "HTML",
+                    };
                     _logger.LogInformation("{Label} export complete: {Path}", label, outputPath);
                     return OperationResult.Ok($"Exported {label} → {Path.GetFileName(outputPath)}");
                 }
@@ -127,9 +137,12 @@ public sealed class PdfToHtmlConverter : IPdfExporter
             if (wslResult is not null) return wslResult;
         }
 
-        string deps = format == ExportFormat.Docx
-            ? "pip install pdfplumber python-docx"
-            : "pip install pdfplumber";
+        string deps = format switch
+        {
+            ExportFormat.Docx => "pip install pdfplumber python-docx",
+            ExportFormat.Xlsx => "pip install pdfplumber openpyxl",
+            _                 => "pip install pdfplumber",
+        };
         return OperationResult.Fail(
             "Python 3 is not installed or not on PATH.\n" +
             $"Install Python 3 from python.org and run: {deps}\n" +
