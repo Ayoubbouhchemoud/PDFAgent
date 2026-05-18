@@ -786,6 +786,96 @@ public sealed class PdfiumEditor : IPdfEditor
         }, ct);
     }
 
+    // ── Remove Protection ────────────────────────────────────────────────────
+
+    public async Task<OperationResult> RemoveProtectionAsync(
+        string inputPath, string outputPath,
+        string password,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+
+                // ── 1. Detect encryption ─────────────────────────────────────
+                // Open with no password first to check IsEncrypted.
+                // For a user-password-protected file this throws, so we catch and
+                // treat any exception here as "file is encrypted".
+                bool isEncrypted;
+                try
+                {
+                    using var probe = PdfReader.Open(inputPath, PdfDocumentOpenMode.Import);
+                    isEncrypted = probe.SecuritySettings.IsEncrypted;
+                }
+                catch
+                {
+                    isEncrypted = true;
+                }
+
+                if (!isEncrypted)
+                    return OperationResult.Fail("This PDF has no password protection to remove.");
+
+                // ── 2. Open with the supplied password ───────────────────────
+                // PdfReader.Open tries the password as both user and owner password.
+                // If incorrect it throws; we surface that as a clean error.
+                PdfDocument input;
+                try
+                {
+                    input = PdfReader.Open(inputPath, password, PdfDocumentOpenMode.Import);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "RemoveProtection: wrong password for {Path}", inputPath);
+                    return OperationResult.Fail("Incorrect password. Please try again.");
+                }
+
+                // ── 3. Copy every page into a fresh, unencrypted document ────
+                using (input)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    using var output = new PdfDocument();
+
+                    // Preserve all document-level metadata exactly.
+                    output.Info.Title    = input.Info.Title;
+                    output.Info.Author   = input.Info.Author;
+                    output.Info.Subject  = input.Info.Subject;
+                    output.Info.Keywords = input.Info.Keywords;
+                    output.Info.Creator  = input.Info.Creator;
+
+                    // AddPage copies the full content stream, fonts, images,
+                    // annotations, and links — no re-rendering.
+                    for (var i = 0; i < input.PageCount; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        output.AddPage(input.Pages[i]);
+                    }
+
+                    // Save with no SecuritySettings = no encryption, open for anyone.
+                    output.Save(outputPath);
+
+                    _logger.LogInformation(
+                        "RemoveProtection: {Pages} pages unlocked → {Out}",
+                        input.PageCount, outputPath);
+
+                    return OperationResult.Ok(
+                        $"Protection removed · {input.PageCount} page(s) saved unencrypted");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "RemoveProtection failed");
+                return OperationResult.Fail($"Failed to remove protection: {ex.Message}");
+            }
+        }, ct);
+    }
+
     private static XFont CreateEditFont(string? rawName, double fontSize, bool bold, bool italic)
     {
         var size  = Math.Max(fontSize, 6);

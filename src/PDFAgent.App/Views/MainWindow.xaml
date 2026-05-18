@@ -152,6 +152,12 @@
                                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                                    VerticalAlignment="Center"/>
                     </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding RemoveProtectionCommand}"
+                            ToolTip="Remove PDF protection — unlock with the correct password">
+                        <TextBlock Text="🔓" FontSize="13"
+                                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                                   VerticalAlignment="Center"/>
+                    </Button>
                     <Button Style="{StaticResource IconButton}" Command="{Binding AnnotateCommand}" ToolTip="Annotate">
                         <Path Style="{StaticResource IconPath}" Data="{StaticResource IconAnnotate}" />
                     </Button>

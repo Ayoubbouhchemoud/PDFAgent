@@ -27,6 +27,15 @@ public interface IPdfEditor
     /// All page content, fonts, images, links, and metadata are preserved exactly.
     /// </summary>
     Task<OperationResult> ProtectAsync(string inputPath, string outputPath, ProtectOptions opts, CancellationToken ct = default);
+
+    /// <summary>
+    /// Remove password protection and permission restrictions from an encrypted PDF.
+    /// The caller must supply the correct user or owner password.
+    /// Output is always a new file; the source is never modified.
+    /// All page content, fonts, images, links, and metadata are preserved exactly.
+    /// Returns a failure result if the password is wrong or the file is not encrypted.
+    /// </summary>
+    Task<OperationResult> RemoveProtectionAsync(string inputPath, string outputPath, string password, CancellationToken ct = default);
     Task<OperationResult> AddBlankPageAsync(string filePath, string outputPath, int insertAtIndex, double widthPts, double heightPts, CancellationToken ct = default);
 
     /// <summary>

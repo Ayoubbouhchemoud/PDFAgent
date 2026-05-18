@@ -70,6 +70,11 @@ public interface IFileDialogService
 
     /// <summary>Shows the Protect PDF dialog. Returns null if cancelled.</summary>
     PDFAgent.Core.Models.ProtectOptions? ShowSecurePdfDialog();
+
+    /// <summary>
+    /// Shows the Remove Protection dialog. Returns the entered password, or null if cancelled.
+    /// </summary>
+    string? ShowRemoveProtectionDialog();
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>

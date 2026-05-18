@@ -281,6 +281,12 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog() == true ? dialog.Options : null;
     }
 
+    public string? ShowRemoveProtectionDialog()
+    {
+        var dialog = new Views.UnlockPdfDialog { Owner = Application.Current.MainWindow };
+        return dialog.ShowDialog() == true ? dialog.Password : null;
+    }
+
     public IReadOnlyList<string> OpenForConversion()
     {
         var dialog = new OpenFileDialog

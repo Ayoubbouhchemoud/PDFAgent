@@ -61,6 +61,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(SortPagesCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrawOnPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(ProtectPdfCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveProtectionCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -1640,6 +1641,39 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _logger.LogError(ex, "ProtectPdf failed");
             StatusText = $"Protection error: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    // ── Remove Protection ────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(DocumentReady))]
+    private async Task RemoveProtectionAsync()
+    {
+        var password = _fileDialog.ShowRemoveProtectionDialog();
+        if (password == null) return;
+
+        var defaultName = Path.GetFileNameWithoutExtension(_pdfEngine.FilePath) + "_unlocked.pdf";
+        var outputPath  = _fileDialog.SavePdf(defaultName);
+        if (string.IsNullOrEmpty(outputPath)) return;
+
+        IsBusy     = true;
+        StatusText = "Removing password protection…";
+
+        try
+        {
+            var result = await _pdfEditor.RemoveProtectionAsync(_pdfEngine.FilePath, outputPath, password);
+            StatusText = result.IsSuccess
+                ? $"Unlocked PDF saved → {Path.GetFileName(outputPath)}"
+                : $"Remove protection failed: {result.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "RemoveProtection failed");
+            StatusText = $"Remove protection error: {ex.Message}";
         }
         finally
         {
