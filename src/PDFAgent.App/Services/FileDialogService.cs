@@ -265,6 +265,16 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
+    public string? SaveTxtFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Text file (*.txt)|*.txt|All files (*.*)|*.*",
+            Title = "Save as plain text…", FileName = defaultName, DefaultExt = ".txt",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
     public SecurePdfDialogResult? ShowSecurePdfDialog()
     {
         var dialog = new Views.SecurePdfDialog { Owner = Application.Current.MainWindow };

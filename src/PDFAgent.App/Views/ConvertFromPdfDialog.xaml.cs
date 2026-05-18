@@ -11,6 +11,7 @@ public partial class ConvertFromPdfDialog : Window
         DocxRadio.IsChecked == true ? ExportFormat.Docx :
         XlsxRadio.IsChecked == true ? ExportFormat.Xlsx :
         MdRadio.IsChecked   == true ? ExportFormat.Md   :
+        TxtRadio.IsChecked  == true ? ExportFormat.Txt  :
         PngRadio.IsChecked  == true ? ExportFormat.Png  :
         JpgRadio.IsChecked  == true ? ExportFormat.Jpg  :
         SvgRadio.IsChecked  == true ? ExportFormat.Svg  :
@@ -34,6 +35,7 @@ public partial class ConvertFromPdfDialog : Window
         DocxRadio.Checked += (_, _) => UpdateMultiPageHint();
         XlsxRadio.Checked += (_, _) => UpdateMultiPageHint();
         MdRadio.Checked   += (_, _) => UpdateMultiPageHint();
+        TxtRadio.Checked  += (_, _) => UpdateMultiPageHint();
     }
 
     private void UpdateMultiPageHint()

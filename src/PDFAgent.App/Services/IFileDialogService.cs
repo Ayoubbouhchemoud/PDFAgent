@@ -65,6 +65,9 @@ public interface IFileDialogService
     /// <summary>Shows a save dialog for a Markdown file.</summary>
     string? SaveMdFile(string defaultName);
 
+    /// <summary>Shows a save dialog for a plain-text file.</summary>
+    string? SaveTxtFile(string defaultName);
+
     /// <summary>Shows the Secure PDF password dialog. Returns null if cancelled.</summary>
     SecurePdfDialogResult? ShowSecurePdfDialog();
 }
