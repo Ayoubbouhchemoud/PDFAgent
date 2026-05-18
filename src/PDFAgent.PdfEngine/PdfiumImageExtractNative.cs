@@ -1,29 +1,45 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using PDFAgent.Core.Interfaces;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
 
 namespace PDFAgent.PdfEngine;
 
 /// <summary>
-/// Extracts embedded images from a PDF using PDFium's own image-object API.
+/// Extracts embedded images from a PDF using two complementary passes:
 ///
-/// Strategy:
-///   • DCTDecode  (JPEG)     → raw stream bytes saved as .jpg — zero re-encoding
-///   • JPXDecode  (JPEG2000) → raw stream bytes saved as .jp2 / .j2k — zero re-encoding
-///   • Everything else       → PDFium decodes to a BGRA/BGR/Gray bitmap → lossless PNG
+/// Pass 1 — PDFium page-object API (primary):
+///   Iterates all FPDF_PAGEOBJ_IMAGE objects on each page.
+///   • JPEG (DCTDecode)     → raw stream bytes saved as .jpg (zero re-encoding)
+///   • JPEG 2000 (JPXDecode)→ raw stream bytes saved as .jp2/.j2k (zero re-encoding)
+///   • All other encodings  → FPDFImageObj_GetBitmap → lossless .png
+///   Inline images are included because PDFium surfaces them as image objects.
 ///
-/// The page is never rendered; only per-object image functions are called.
+/// Pass 2 — PdfPig content-stream scan (supplemental):
+///   Walks each page's content stream including nested Form XObjects.
+///   Images that were already saved in Pass 1 (identified by MD5) are skipped.
+///   • JPEG raw bytes → .jpg
+///   • JPEG 2000 raw bytes → .jp2/.j2k
+///   • TryGetPng() → .png (handles FlateDecode, LZW, etc.)
+///   Failures on individual images are logged and skipped; the scan continues.
+///
+/// The original PDF is never modified. Images are saved to <outputFolder>.
+/// Same XObjects referenced on multiple pages are deduplicated via MD5.
 /// </summary>
 internal static class PdfiumImageExtractNative
 {
     private static readonly object _lock = PdfiumSharedLock.Instance;
 
-    // ── PDFium constants ──────────────────────────────────────────────────────
-    private const int FPDF_PAGEOBJ_IMAGE = 1;
-    private const int FPDFBitmap_Gray    = 1;
-    private const int FPDFBitmap_BGR     = 2;
-    private const int FPDFBitmap_BGRx    = 3;
-    private const int FPDFBitmap_BGRA    = 4;
+    // ── PDFium page-object type constants ─────────────────────────────────────
+    private const int FPDF_PAGEOBJ_IMAGE = 3;   // NOT 1 — that is TEXT
+    // private const int FPDF_PAGEOBJ_FORM  = 5; // reserved for future recursion
+
+    // ── PDFium bitmap format constants ────────────────────────────────────────
+    private const int FPDFBitmap_Gray = 1;
+    private const int FPDFBitmap_BGR  = 2;
+    private const int FPDFBitmap_BGRx = 3;
+    private const int FPDFBitmap_BGRA = 4;
 
     // ── P/Invoke ──────────────────────────────────────────────────────────────
 
@@ -58,12 +74,15 @@ internal static class PdfiumImageExtractNative
     private static extern bool FPDFImageObj_GetImageMetadata(
         IntPtr imageObj, IntPtr page, ref FpdfImageObjMetadata metadata);
 
-    // Two overloads for GetImageDataRaw: one for size-query (null buf), one for fill.
-    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl, EntryPoint = "FPDFImageObj_GetImageDataRaw")]
+    // Two overloads of the same native function: first to query needed buffer size,
+    // second to fill the buffer.
+    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl,
+               EntryPoint = "FPDFImageObj_GetImageDataRaw")]
     private static extern uint FPDFImageObj_GetRawSize(
         IntPtr imageObj, IntPtr doc, IntPtr zeroBuf, uint zeroLen);
 
-    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl, EntryPoint = "FPDFImageObj_GetImageDataRaw")]
+    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl,
+               EntryPoint = "FPDFImageObj_GetImageDataRaw")]
     private static extern uint FPDFImageObj_GetRawData(
         IntPtr imageObj, IntPtr doc, byte[] buffer, uint bufLen);
 
@@ -116,7 +135,16 @@ internal static class PdfiumImageExtractNative
         IProgress<double>? progress,
         CancellationToken ct)
     {
-        // All PDFium calls must be serialised through the shared lock.
+        Directory.CreateDirectory(outputFolder);
+
+        var pdfBase      = Path.GetFileNameWithoutExtension(inputPath);
+        var seen         = new HashSet<string>(StringComparer.Ordinal); // global MD5 dedup
+        var saved        = 0;
+        var skipped      = 0;
+        var scannedPages = 0;
+
+        // ── Pass 1: PDFium direct image-object enumeration ────────────────────
+        // This covers all FPDF_PAGEOBJ_IMAGE objects including inline images.
         lock (_lock)
         {
             var bytes = File.ReadAllBytes(inputPath);
@@ -125,130 +153,158 @@ internal static class PdfiumImageExtractNative
                 throw new InvalidOperationException("PDFium: cannot open the document.");
             try
             {
-                return ExtractCore(doc, inputPath, options, outputFolder, progress, ct);
+                int pageCount = FPDF_GetPageCount(doc);
+                var pages     = ResolvePageNumbers(options, pageCount).ToList();
+
+                for (int pi = 0; pi < pages.Count; pi++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    progress?.Report(0.5 * pi / pages.Count); // first half of progress
+
+                    int pageNum = pages[pi];
+                    var page    = FPDF_LoadPage(doc, pageNum - 1);
+                    if (page == IntPtr.Zero) { skipped++; continue; }
+
+                    try
+                    {
+                        int objCount = FPDFPage_CountObjects(page);
+                        var imgObjs  = new List<IntPtr>(objCount);
+
+                        for (int oi = 0; oi < objCount; oi++)
+                        {
+                            var obj = FPDFPage_GetObject(page, oi);
+                            if (obj != IntPtr.Zero && FPDFPageObj_GetType(obj) == FPDF_PAGEOBJ_IMAGE)
+                                imgObjs.Add(obj);
+                        }
+
+                        if (imgObjs.Count == 1)
+                        {
+                            var m = new FpdfImageObjMetadata();
+                            FPDFImageObj_GetImageMetadata(imgObjs[0], page, ref m);
+                            if ((long)m.Width * m.Height > 1_000_000)
+                                scannedPages++;
+                        }
+
+                        int imgIdx = 0;
+                        foreach (var imgObj in imgObjs)
+                        {
+                            var meta = new FpdfImageObjMetadata();
+                            FPDFImageObj_GetImageMetadata(imgObj, page, ref meta);
+
+                            if (meta.Width  < (uint)options.MinDimensionPx ||
+                                meta.Height < (uint)options.MinDimensionPx)
+                            { skipped++; continue; }
+
+                            var (fileBytes, ext) = GetImageBytesViaPdfium(imgObj, doc);
+                            if (fileBytes == null || fileBytes.Length == 0)
+                            { skipped++; continue; }
+
+                            var hash = Md5Hex(fileBytes);
+                            if (!seen.Add(hash)) continue;
+
+                            imgIdx++;
+                            var name = $"{pdfBase}_p{pageNum:D3}_{imgIdx:D2}_{meta.Width}x{meta.Height}.{ext}";
+                            File.WriteAllBytes(Path.Combine(outputFolder, name), fileBytes);
+                            saved++;
+                        }
+                    }
+                    finally { FPDF_ClosePage(page); }
+                }
             }
-            finally
-            {
-                FPDF_CloseDocument(doc);
-            }
+            finally { FPDF_CloseDocument(doc); }
         }
-    }
 
-    // ── Core extraction ───────────────────────────────────────────────────────
-
-    private static ExtractionResult ExtractCore(
-        IntPtr doc,
-        string inputPath,
-        ExtractImagesOptions options,
-        string outputFolder,
-        IProgress<double>? progress,
-        CancellationToken ct)
-    {
-        int pageCount = FPDF_GetPageCount(doc);
-        var pdfBase   = Path.GetFileNameWithoutExtension(inputPath);
-        var pages     = ResolvePageNumbers(options, pageCount).ToList();
-
-        int saved        = 0;
-        int skipped      = 0;
-        int scannedPages = 0;
-        var seen         = new HashSet<string>(StringComparer.Ordinal); // MD5 dedup
-
-        for (int pi = 0; pi < pages.Count; pi++)
+        // ── Pass 2: PdfPig content-stream scan (Form XObjects + any gaps) ─────
+        // PdfPig recurses into Do operators that reference Form XObjects, finding
+        // images that PDFium's top-level object list does not surface.
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            progress?.Report((double)pi / pages.Count);
+            using var pigDoc  = UglyToad.PdfPig.PdfDocument.Open(inputPath);
+            int pageCount     = pigDoc.NumberOfPages;
+            var pages         = ResolvePageNumbers(options, pageCount).ToList();
 
-            int pageNum = pages[pi]; // 1-based
-            var page    = FPDF_LoadPage(doc, pageNum - 1);
-            if (page == IntPtr.Zero) { skipped++; continue; }
-
-            try
+            for (int pi = 0; pi < pages.Count; pi++)
             {
-                int objCount = FPDFPage_CountObjects(page);
-                var imgObjs  = new List<IntPtr>(objCount);
+                ct.ThrowIfCancellationRequested();
+                progress?.Report(0.5 + 0.5 * pi / pages.Count);
 
-                for (int oi = 0; oi < objCount; oi++)
-                {
-                    var obj = FPDFPage_GetObject(page, oi);
-                    if (obj != IntPtr.Zero && FPDFPageObj_GetType(obj) == FPDF_PAGEOBJ_IMAGE)
-                        imgObjs.Add(obj);
-                }
-
-                // Scanned-page heuristic: single image > 1 MP
-                if (imgObjs.Count == 1)
-                {
-                    var m = new FpdfImageObjMetadata();
-                    FPDFImageObj_GetImageMetadata(imgObjs[0], page, ref m);
-                    if ((long)m.Width * m.Height > 1_000_000)
-                        scannedPages++;
-                }
+                int pageNum = pages[pi];
+                IReadOnlyList<IPdfImage> pigImages;
+                try   { pigImages = pigDoc.GetPage(pageNum).GetImages().ToList(); }
+                catch { continue; } // PdfPig can't parse this page — skip
 
                 int imgIdx = 0;
-                foreach (var imgObj in imgObjs)
+                foreach (var img in pigImages)
                 {
-                    var meta = new FpdfImageObjMetadata();
-                    FPDFImageObj_GetImageMetadata(imgObj, page, ref meta);
+                    try
+                    {
+                        if (img.IsImageMask) continue;
+                        if (img.WidthInSamples  < options.MinDimensionPx ||
+                            img.HeightInSamples < options.MinDimensionPx)
+                        { skipped++; continue; }
 
-                    // Skip images below the minimum dimension threshold
-                    if (meta.Width  < (uint)options.MinDimensionPx ||
-                        meta.Height < (uint)options.MinDimensionPx)
-                    { skipped++; continue; }
+                        var raw = img.RawBytes.Count == 0 ? Array.Empty<byte>() : img.RawBytes.ToArray();
 
-                    var (fileBytes, ext) = GetImageBytes(imgObj, doc);
-                    if (fileBytes == null || fileBytes.Length == 0)
-                    { skipped++; continue; }
+                        byte[]? fileBytes = null;
+                        string  ext       = "png";
 
-                    // Deduplicate: same XObject referenced from multiple pages is written once
-                    var hash = Md5Hex(fileBytes);
-                    if (!seen.Add(hash)) continue;
+                        if (raw.Length > 0 && IsJpeg(raw))
+                        {
+                            fileBytes = raw;
+                            ext       = "jpg";
+                        }
+                        else if (raw.Length > 0 && IsJpeg2000(raw))
+                        {
+                            fileBytes = raw;
+                            ext       = IsJp2Container(raw) ? "jp2" : "j2k";
+                        }
+                        else if (img.TryGetPng(out var png) && png is { Length: > 0 })
+                        {
+                            fileBytes = png;
+                            ext       = "png";
+                        }
 
-                    imgIdx++;
-                    var name    = $"{pdfBase}_p{pageNum:D3}_{imgIdx:D2}_{meta.Width}x{meta.Height}.{ext}";
-                    var outPath = Path.Combine(outputFolder, name);
-                    File.WriteAllBytes(outPath, fileBytes);
-                    saved++;
+                        if (fileBytes == null || fileBytes.Length == 0)
+                        { skipped++; continue; }
+
+                        var hash = Md5Hex(fileBytes);
+                        if (!seen.Add(hash)) continue; // already written in Pass 1
+
+                        imgIdx++;
+                        var name = $"{pdfBase}_p{pageNum:D3}_f{imgIdx:D2}_{img.WidthInSamples}x{img.HeightInSamples}.{ext}";
+                        File.WriteAllBytes(Path.Combine(outputFolder, name), fileBytes);
+                        saved++;
+                    }
+                    catch { skipped++; } // per-image failure — continue the scan
                 }
             }
-            finally
-            {
-                FPDF_ClosePage(page);
-            }
         }
+        catch (OperationCanceledException) { throw; }
+        catch { /* PdfPig can't open the document — Pass 1 results stand */ }
 
         progress?.Report(1.0);
         return new ExtractionResult(saved, skipped, scannedPages);
     }
 
-    // ── Format resolution ─────────────────────────────────────────────────────
+    // ── PDFium extraction helpers ─────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns (file bytes, extension) for one image object.
-    /// JPEG and JPEG 2000 streams are returned as-is (zero re-encoding).
-    /// All other formats are decoded by PDFium to a BGRA/BGR/Gray bitmap and saved as PNG.
-    /// </summary>
-    private static (byte[]? Bytes, string Ext) GetImageBytes(IntPtr imgObj, IntPtr doc)
+    private static (byte[]? Bytes, string Ext) GetImageBytesViaPdfium(IntPtr imgObj, IntPtr doc)
     {
-        // Get raw (compressed/encoded) stream bytes
+        // Try raw compressed stream first
         uint rawSize = FPDFImageObj_GetRawSize(imgObj, doc, IntPtr.Zero, 0);
         if (rawSize > 0)
         {
             var raw = new byte[rawSize];
             FPDFImageObj_GetRawData(imgObj, doc, raw, rawSize);
 
-            if (IsJpeg(raw))
-                return (raw, "jpg");
-
-            if (IsJpeg2000(raw))
-                return (raw, IsJp2Container(raw) ? "jp2" : "j2k");
+            if (IsJpeg(raw))     return (raw, "jpg");
+            if (IsJpeg2000(raw)) return (raw, IsJp2Container(raw) ? "jp2" : "j2k");
         }
 
-        // For everything else (FlateDecode, LZW, CCITTFax, JBIG2, uncompressed, etc.)
-        // let PDFium decode the image to an in-memory bitmap and encode losslessly as PNG.
+        // Fallback: let PDFium decode to a BGRA/BGR/Gray bitmap → lossless PNG
         var png = BitmapToPng(imgObj);
         return (png, "png");
     }
-
-    // ── Bitmap → PNG ──────────────────────────────────────────────────────────
 
     private static byte[]? BitmapToPng(IntPtr imgObj)
     {
@@ -269,28 +325,17 @@ internal static class PdfiumImageExtractNative
 
             return fmt switch
             {
-                // BGRA (= .NET Format32bppArgb in memory layout on little-endian)
                 FPDFBitmap_BGRA => PixelsToPng(pixels, w, h, stride,
                     System.Drawing.Imaging.PixelFormat.Format32bppArgb),
-
-                // BGRx — 32bpp, alpha channel unused
                 FPDFBitmap_BGRx => PixelsToPng(pixels, w, h, stride,
                     System.Drawing.Imaging.PixelFormat.Format32bppRgb),
-
-                // BGR — 24bpp (same byte order as .NET Format24bppRgb on x86)
-                FPDFBitmap_BGR => PixelsToPng(pixels, w, h, stride,
+                FPDFBitmap_BGR  => PixelsToPng(pixels, w, h, stride,
                     System.Drawing.Imaging.PixelFormat.Format24bppRgb),
-
-                // 8-bit grayscale — expand to RGB for a valid PNG
                 FPDFBitmap_Gray => GrayToPng(pixels, w, h, stride),
-
-                _ => null,
+                _               => null,
             };
         }
-        finally
-        {
-            FPDFBitmap_Destroy(bmp);
-        }
+        finally { FPDFBitmap_Destroy(bmp); }
     }
 
     private static byte[] PixelsToPng(
@@ -317,7 +362,6 @@ internal static class PdfiumImageExtractNative
 
     private static byte[] GrayToPng(byte[] gray, int w, int h, int srcStride)
     {
-        // Expand each gray byte to BGR triple so System.Drawing can produce a valid PNG
         using var drawBmp = new System.Drawing.Bitmap(w, h,
             System.Drawing.Imaging.PixelFormat.Format24bppRgb);
         var bmpData = drawBmp.LockBits(
