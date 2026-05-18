@@ -12,4 +12,5 @@ public enum ExportFormat
     Png,
     Jpg,
     Svg,
+    Md,
 }

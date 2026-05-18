@@ -35,7 +35,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         CancellationToken ct = default)
     {
         if (format != ExportFormat.Html  && format != ExportFormat.Docx &&
-            format != ExportFormat.Xlsx  &&
+            format != ExportFormat.Xlsx  && format != ExportFormat.Md   &&
             format != ExportFormat.Png   && format != ExportFormat.Jpg  && format != ExportFormat.Svg)
             return Task.FromResult(
                 OperationResult.Fail($"Format '{format}' is not yet implemented."));
@@ -51,6 +51,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         {
             ExportFormat.Docx => "pdf_to_docx.py",
             ExportFormat.Xlsx => "pdf_to_xlsx.py",
+            ExportFormat.Md   => "pdf_to_md.py",
             ExportFormat.Png or ExportFormat.Jpg or ExportFormat.Svg => "pdf_to_image.py",
             _                 => "pdf_to_html.py",
         };
@@ -116,6 +117,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
                     {
                         ExportFormat.Docx => "DOCX",
                         ExportFormat.Xlsx => "XLSX",
+                        ExportFormat.Md   => "Markdown",
                         ExportFormat.Png  => "PNG",
                         ExportFormat.Jpg  => "JPEG",
                         ExportFormat.Svg  => "SVG",

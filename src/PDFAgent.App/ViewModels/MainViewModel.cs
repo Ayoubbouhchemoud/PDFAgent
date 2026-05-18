@@ -882,6 +882,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             ExportFormat.Docx => _fileDialog.SaveDocxFile($"{baseName}.docx"),
             ExportFormat.Xlsx => _fileDialog.SaveXlsxFile($"{baseName}.xlsx"),
+            ExportFormat.Md   => _fileDialog.SaveMdFile($"{baseName}.md"),
             ExportFormat.Png  => multiPage ? _fileDialog.SaveZipFile($"{baseName}_pages.zip")
                                            : _fileDialog.SavePngFile($"{baseName}.png"),
             ExportFormat.Jpg  => multiPage ? _fileDialog.SaveZipFile($"{baseName}_pages.zip")
@@ -899,6 +900,7 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 ExportFormat.Docx => "Word document",
                 ExportFormat.Xlsx => "Excel workbook",
+                ExportFormat.Md   => "Markdown",
                 ExportFormat.Png  => multiPage ? "PNG images (ZIP)" : "PNG image",
                 ExportFormat.Jpg  => multiPage ? "JPEG images (ZIP)" : "JPEG image",
                 ExportFormat.Svg  => multiPage ? "SVG images (ZIP)" : "SVG image",

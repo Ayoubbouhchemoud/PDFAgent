@@ -10,6 +10,7 @@ public partial class ConvertFromPdfDialog : Window
     public ExportFormat SelectedFormat =>
         DocxRadio.IsChecked == true ? ExportFormat.Docx :
         XlsxRadio.IsChecked == true ? ExportFormat.Xlsx :
+        MdRadio.IsChecked   == true ? ExportFormat.Md   :
         PngRadio.IsChecked  == true ? ExportFormat.Png  :
         JpgRadio.IsChecked  == true ? ExportFormat.Jpg  :
         SvgRadio.IsChecked  == true ? ExportFormat.Svg  :
@@ -26,12 +27,13 @@ public partial class ConvertFromPdfDialog : Window
             MultiPageHint.Text =
                 $"Image formats: all {totalPages} pages will be saved in a single ZIP archive.";
 
-        PngRadio.Checked += (_, _) => UpdateMultiPageHint();
-        JpgRadio.Checked += (_, _) => UpdateMultiPageHint();
-        SvgRadio.Checked += (_, _) => UpdateMultiPageHint();
-        HtmlRadio.Checked  += (_, _) => UpdateMultiPageHint();
-        DocxRadio.Checked  += (_, _) => UpdateMultiPageHint();
-        XlsxRadio.Checked  += (_, _) => UpdateMultiPageHint();
+        PngRadio.Checked  += (_, _) => UpdateMultiPageHint();
+        JpgRadio.Checked  += (_, _) => UpdateMultiPageHint();
+        SvgRadio.Checked  += (_, _) => UpdateMultiPageHint();
+        HtmlRadio.Checked += (_, _) => UpdateMultiPageHint();
+        DocxRadio.Checked += (_, _) => UpdateMultiPageHint();
+        XlsxRadio.Checked += (_, _) => UpdateMultiPageHint();
+        MdRadio.Checked   += (_, _) => UpdateMultiPageHint();
     }
 
     private void UpdateMultiPageHint()

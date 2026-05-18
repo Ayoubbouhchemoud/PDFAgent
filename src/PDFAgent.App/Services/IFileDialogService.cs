@@ -62,6 +62,9 @@ public interface IFileDialogService
     /// <summary>Shows a save dialog for a ZIP archive (multi-page image exports).</summary>
     string? SaveZipFile(string defaultName);
 
+    /// <summary>Shows a save dialog for a Markdown file.</summary>
+    string? SaveMdFile(string defaultName);
+
     /// <summary>Shows the Secure PDF password dialog. Returns null if cancelled.</summary>
     SecurePdfDialogResult? ShowSecurePdfDialog();
 }
