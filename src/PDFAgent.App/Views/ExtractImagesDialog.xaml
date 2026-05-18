@@ -1,0 +1,126 @@
+<Window x:Class="PDFAgent.App.Views.ExtractImagesDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Extract Images"
+        Width="400" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource SurfaceBrush}"
+        FontFamily="{DynamicResource BodyFont}"
+        TextOptions.TextFormattingMode="Ideal"
+        UseLayoutRounding="True">
+
+    <StackPanel Margin="24,20">
+
+        <!-- Header -->
+        <TextBlock Text="Extract Images"
+                   FontFamily="{DynamicResource HeadingFont}"
+                   FontSize="18" FontWeight="SemiBold"
+                   Foreground="{DynamicResource OnSurfaceBrush}"
+                   Margin="0,0,0,20" />
+
+        <!-- SCOPE label -->
+        <TextBlock Text="SCOPE"
+                   FontSize="11" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,10" />
+
+        <!-- Option 1: All pages -->
+        <RadioButton x:Name="RadioAllPages"
+                     GroupName="Scope"
+                     IsChecked="True"
+                     Foreground="{DynamicResource OnSurfaceBrush}"
+                     FontSize="14"
+                     Margin="0,0,0,2"
+                     Checked="Scope_Checked">
+            <TextBlock Text="All pages" />
+        </RadioButton>
+        <TextBlock Text="Extract images from every page in the PDF."
+                   FontSize="11" Foreground="{DynamicResource OutlineBrush}"
+                   Margin="20,0,0,12" />
+
+        <!-- Option 2: Current page -->
+        <RadioButton x:Name="RadioCurrentPage"
+                     GroupName="Scope"
+                     Foreground="{DynamicResource OnSurfaceBrush}"
+                     FontSize="14"
+                     Margin="0,0,0,2"
+                     Checked="Scope_Checked">
+            <TextBlock x:Name="CurrentPageLabel" Text="Current page (page 1)" />
+        </RadioButton>
+        <TextBlock Text="Extract images from the currently viewed page only."
+                   FontSize="11" Foreground="{DynamicResource OutlineBrush}"
+                   Margin="20,0,0,12" />
+
+        <!-- Option 3: Page range -->
+        <RadioButton x:Name="RadioPageRange"
+                     GroupName="Scope"
+                     Foreground="{DynamicResource OnSurfaceBrush}"
+                     FontSize="14"
+                     Margin="0,0,0,2"
+                     Checked="Scope_Checked">
+            <TextBlock Text="Page range" />
+        </RadioButton>
+        <TextBlock Text="Extract images from a specific set of pages."
+                   FontSize="11" Foreground="{DynamicResource OutlineBrush}"
+                   Margin="20,0,0,6" />
+        <StackPanel Orientation="Horizontal" Margin="20,0,0,4">
+            <TextBlock Text="Pages:" FontSize="13"
+                       Foreground="{DynamicResource OnSurfaceBrush}"
+                       VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox x:Name="PageRangeBox"
+                     Style="{StaticResource InputTextBox}"
+                     Width="180" IsEnabled="False"
+                     ToolTip="e.g. 1, 3-5, 7-10" />
+        </StackPanel>
+        <TextBlock Text="e.g. 1, 3-5, 7-10"
+                   FontSize="11" Foreground="{DynamicResource OutlineBrush}"
+                   Margin="20,0,0,16" />
+
+        <!-- MIN SIZE -->
+        <TextBlock Text="MINIMUM SIZE"
+                   FontSize="11" FontWeight="Bold"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,8" />
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+            <TextBlock Text="Skip images smaller than"
+                       FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}"
+                       VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox x:Name="MinSizeBox"
+                     Text="32"
+                     Style="{StaticResource InputTextBox}"
+                     Width="60" />
+            <TextBlock Text="px"
+                       FontSize="13" Foreground="{DynamicResource OnSurfaceBrush}"
+                       VerticalAlignment="Center" Margin="8,0,0,0" />
+        </StackPanel>
+        <TextBlock Text="Images smaller than this in either dimension are ignored."
+                   FontSize="11" Foreground="{DynamicResource OutlineBrush}"
+                   Margin="0,0,0,0" />
+
+        <!-- Validation message -->
+        <TextBlock x:Name="ValidationMsg"
+                   FontSize="12"
+                   Foreground="#CC2200"
+                   Margin="0,12,0,0"
+                   Visibility="Collapsed" />
+
+        <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,16,0,16" />
+
+        <!-- Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel"
+                    Style="{StaticResource OutlinedButton}"
+                    Width="96" Margin="0,0,8,0"
+                    IsCancel="True"
+                    Click="Cancel_Click" />
+            <Button Content="Extract →"
+                    Style="{StaticResource FilledButton}"
+                    Width="96"
+                    IsDefault="True"
+                    Click="Extract_Click" />
+        </StackPanel>
+
+    </StackPanel>
+</Window>

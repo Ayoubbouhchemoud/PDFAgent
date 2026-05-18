@@ -69,17 +69,27 @@ public interface IPdfEditor
         CancellationToken ct = default);
 
     /// <summary>
-    /// Extract all embedded raster images from a PDF and save each to
-    /// <paramref name="outputFolder"/> as JPEG (for DCT-encoded images) or PNG.
-    /// Image masks and images smaller than 32×32 px are skipped.
-    /// Duplicate images (same raw bytes) are written only once.
-    /// Returns a failure result if no extractable images are found.
+    /// Extract embedded raster images from a PDF, saving each file without
+    /// re-encoding. JPEG streams are saved as .jpg, JPEG 2000 as .jp2, and
+    /// all other formats are decoded losslessly and saved as .png.
     /// </summary>
     Task<OperationResult> ExtractImagesAsync(
         string inputPath,
         string outputFolder,
+        ExtractImagesOptions options,
         IProgress<double>? progress = null,
         CancellationToken ct = default);
+}
+
+public enum ImageExtractScope { AllPages, CurrentPage, PageRange }
+
+/// <summary>Options for the Extract Images operation.</summary>
+public sealed record ExtractImagesOptions
+{
+    public ImageExtractScope Scope       { get; init; } = ImageExtractScope.AllPages;
+    public int    CurrentPageNumber      { get; init; } = 1;   // 1-based; used when Scope = CurrentPage
+    public string PageRangeText          { get; init; } = "";  // e.g. "1, 3-5, 7" for PageRange scope
+    public int    MinDimensionPx         { get; init; } = 32;  // skip images smaller than this in either dim
 }
 
 public enum SplitMode { SplitAll, SplitRange, SplitEvery }

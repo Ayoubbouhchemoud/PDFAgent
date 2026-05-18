@@ -968,6 +968,9 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(DocumentReady))]
     private async Task ExtractImagesAsync()
     {
+        var opts = _fileDialog.ShowExtractImagesDialog(CurrentPage, TotalPages);
+        if (opts == null) return;
+
         var outputFolder = _fileDialog.SelectFolder();
         if (outputFolder == null) return;
 
@@ -978,8 +981,16 @@ public sealed partial class MainViewModel : ObservableObject
             var progress = new Progress<double>(p =>
                 StatusText = $"Extracting images… {p:P0}");
 
+            var extractOptions = new PDFAgent.Core.Interfaces.ExtractImagesOptions
+            {
+                Scope             = opts.Scope,
+                CurrentPageNumber = CurrentPage,
+                PageRangeText     = opts.PageRangeText,
+                MinDimensionPx    = opts.MinDimensionPx,
+            };
+
             var result = await _pdfEditor.ExtractImagesAsync(
-                _pdfEngine.FilePath, outputFolder, progress);
+                _pdfEngine.FilePath, outputFolder, extractOptions, progress);
 
             if (result.IsSuccess)
             {

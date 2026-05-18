@@ -80,6 +80,9 @@ public interface IFileDialogService
     /// Shows a "Password Required" dialog for opening a protected PDF. Returns the entered password, or null if cancelled.
     /// </summary>
     string? ShowOpenPasswordDialog();
+
+    /// <summary>Shows the Extract Images dialog. Returns null if cancelled.</summary>
+    ExtractImagesDialogResult? ShowExtractImagesDialog(int currentPage, int totalPages);
 }
 
 /// <summary>Result returned by the Rotate Options dialog.</summary>
@@ -100,3 +103,9 @@ public enum AddPagePosition { BeforeCurrent, AfterCurrent, AtBeginning, AtEnd }
 
 /// <summary>Result returned by the Add Page dialog.</summary>
 public sealed record AddPageDialogResult(AddPagePosition Position, double WidthPts, double HeightPts);
+
+/// <summary>Result returned by the Extract Images dialog.</summary>
+public sealed record ExtractImagesDialogResult(
+    PDFAgent.Core.Interfaces.ImageExtractScope Scope,
+    string PageRangeText,
+    int MinDimensionPx);

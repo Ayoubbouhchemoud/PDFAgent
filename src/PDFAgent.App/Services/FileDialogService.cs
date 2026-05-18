@@ -293,6 +293,14 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog() == true ? dialog.Password : null;
     }
 
+    public ExtractImagesDialogResult? ShowExtractImagesDialog(int currentPage, int totalPages)
+    {
+        var dialog = new Views.ExtractImagesDialog(currentPage, totalPages)
+            { Owner = Application.Current.MainWindow };
+        if (dialog.ShowDialog() != true) return null;
+        return new ExtractImagesDialogResult(dialog.Scope, dialog.PageRangeText, dialog.MinDimensionPx);
+    }
+
     public IReadOnlyList<string> OpenForConversion()
     {
         var dialog = new OpenFileDialog
