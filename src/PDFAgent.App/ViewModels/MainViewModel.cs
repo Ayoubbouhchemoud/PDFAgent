@@ -62,6 +62,7 @@ public sealed partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(DrawOnPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(ProtectPdfCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveProtectionCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExtractImagesCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
