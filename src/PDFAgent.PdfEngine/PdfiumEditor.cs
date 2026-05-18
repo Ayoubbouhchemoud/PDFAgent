@@ -1251,100 +1251,24 @@ public sealed class PdfiumEditor : IPdfEditor
             {
                 Directory.CreateDirectory(outputFolder);
 
-                using var doc     = UglyToad.PdfPig.PdfDocument.Open(inputPath);
-                var pageCount     = doc.NumberOfPages;
-                var pdfBaseName   = Path.GetFileNameWithoutExtension(inputPath);
-                var pagesToProcess = ResolvePageNumbers(options, pageCount);
+                var r = PdfiumImageExtractNative.ExtractImages(
+                    inputPath, password: null, options, outputFolder, progress, ct);
 
-                var saved        = 0;
-                var skipped      = 0;
-                var scannedPages = 0;
-                // Dedup by MD5 of raw bytes — same XObject referenced from multiple pages is written once
-                var seen = new HashSet<string>();
-
-                var pageList = pagesToProcess.ToList();
-                for (var pi = 0; pi < pageList.Count; pi++)
+                if (r.Saved == 0)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    progress?.Report((double)pi / pageList.Count);
-
-                    var pageNum  = pageList[pi];
-                    var page     = doc.GetPage(pageNum);
-                    var allImgs  = page.GetImages().ToList();
-
-                    // Detect scanned pages: single large image with no other content
-                    var meaningful = allImgs
-                        .Where(i => !i.IsImageMask &&
-                                    i.WidthInSamples  >= options.MinDimensionPx &&
-                                    i.HeightInSamples >= options.MinDimensionPx)
-                        .ToList();
-
-                    if (meaningful.Count == 1 && IsLikelyFullPageScan(meaningful[0]))
-                        scannedPages++;
-
-                    var imgIdx = 0;
-                    foreach (var img in meaningful)
-                    {
-                        var raw = img.RawBytes.ToArray();
-                        if (raw.Length == 0) { skipped++; continue; }
-
-                        // Dedup — same XObject referenced on multiple pages is only written once
-                        var hash = ComputeMd5Hex(raw);
-                        if (!seen.Add(hash)) continue;
-
-                        string ext;
-                        byte[] saveBytes;
-
-                        if (IsJpegBytes(raw))
-                        {
-                            // DCTDecode — raw bytes ARE the JPEG file (no re-encoding)
-                            ext       = "jpg";
-                            saveBytes = raw;
-                        }
-                        else if (IsJpeg2000Bytes(raw) ||
-                                 (img is UglyToad.PdfPig.XObjects.XObjectImage xoi && xoi.IsJpxEncoded))
-                        {
-                            // JPXDecode — raw bytes ARE a JPEG 2000 stream (.jp2 or .j2k)
-                            ext       = IsJp2ContainerBytes(raw) ? "jp2" : "j2k";
-                            saveBytes = raw;
-                        }
-                        else if (img.TryGetPng(out var pngBytes) && pngBytes is { Length: > 0 })
-                        {
-                            // FlateDecode / LZW / other — decode losslessly and save as PNG
-                            ext       = "png";
-                            saveBytes = pngBytes;
-                        }
-                        else
-                        {
-                            // JBIG2 / unknown — cannot decode without specialised library
-                            skipped++;
-                            continue;
-                        }
-
-                        imgIdx++;
-                        var name    = $"{pdfBaseName}_p{pageNum:D3}_{imgIdx:D2}_{img.WidthInSamples}x{img.HeightInSamples}.{ext}";
-                        var outPath = Path.Combine(outputFolder, name);
-                        File.WriteAllBytes(outPath, saveBytes);
-                        saved++;
-                    }
-                }
-
-                progress?.Report(1.0);
-
-                if (saved == 0)
-                {
-                    var reason = scannedPages > 0
-                        ? $"This PDF appears to contain {scannedPages} scanned page(s). " +
+                    var reason = r.ScannedPages > 0
+                        ? $"This PDF appears to contain {r.ScannedPages} scanned page(s). " +
                           "The content is a full-page raster image — use 'Convert from PDF' to export pages as images."
                         : "No extractable embedded images were found in the selected pages.";
                     return OperationResult.Fail(reason);
                 }
 
-                var parts = new List<string> { $"{saved} image{(saved == 1 ? "" : "s")} extracted" };
-                if (scannedPages > 0)
-                    parts.Add($"{scannedPages} scanned page{(scannedPages == 1 ? "" : "s")} detected");
-                if (skipped > 0)
-                    parts.Add($"{skipped} skipped (undecodable format)");
+                var parts = new List<string>
+                    { $"{r.Saved} image{(r.Saved == 1 ? "" : "s")} extracted" };
+                if (r.ScannedPages > 0)
+                    parts.Add($"{r.ScannedPages} scanned page{(r.ScannedPages == 1 ? "" : "s")} detected");
+                if (r.Skipped > 0)
+                    parts.Add($"{r.Skipped} skipped");
 
                 return OperationResult.Ok(string.Join(" · ", parts));
             }
@@ -1354,59 +1278,5 @@ public sealed class PdfiumEditor : IPdfEditor
                 return OperationResult.Fail($"Extract failed: {ex.Message}");
             }
         }, ct);
-    }
-
-    // Returns the 1-based page numbers to process, in order
-    private static IEnumerable<int> ResolvePageNumbers(ExtractImagesOptions opts, int pageCount) =>
-        opts.Scope switch
-        {
-            ImageExtractScope.CurrentPage => [Math.Clamp(opts.CurrentPageNumber, 1, pageCount)],
-            ImageExtractScope.PageRange   => ParsePageRange(opts.PageRangeText, pageCount),
-            _                             => Enumerable.Range(1, pageCount),
-        };
-
-    private static IEnumerable<int> ParsePageRange(string text, int maxPage)
-    {
-        var result = new SortedSet<int>();
-        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var dash = part.IndexOf('-');
-            if (dash > 0 &&
-                int.TryParse(part[..dash], out var from) &&
-                int.TryParse(part[(dash + 1)..], out var to))
-            {
-                for (var i = Math.Max(1, from); i <= Math.Min(maxPage, to); i++)
-                    result.Add(i);
-            }
-            else if (int.TryParse(part, out var single) && single >= 1 && single <= maxPage)
-            {
-                result.Add(single);
-            }
-        }
-        return result.Count > 0 ? result : Enumerable.Range(1, maxPage);
-    }
-
-    // A single large image (> 1 MP) is a strong indicator of a scanned page
-    private static bool IsLikelyFullPageScan(UglyToad.PdfPig.Content.IPdfImage img) =>
-        (long)img.WidthInSamples * img.HeightInSamples > 1_000_000;
-
-    private static bool IsJpegBytes(byte[] data) =>
-        data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
-
-    // JP2 container (ISO BMFF box): 00 00 00 0C 6A 50 20 20
-    private static bool IsJp2ContainerBytes(byte[] data) =>
-        data.Length > 11 &&
-        data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x0C &&
-        data[4] == 0x6A && data[5] == 0x50 && data[6] == 0x20 && data[7] == 0x20;
-
-    // JPEG 2000 codestream (raw .j2k): FF 4F FF 51
-    private static bool IsJpeg2000Bytes(byte[] data) =>
-        IsJp2ContainerBytes(data) ||
-        (data.Length > 3 && data[0] == 0xFF && data[1] == 0x4F && data[2] == 0xFF && data[3] == 0x51);
-
-    private static string ComputeMd5Hex(byte[] data)
-    {
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        return Convert.ToHexString(md5.ComputeHash(data));
     }
 }
