@@ -9,4 +9,7 @@ public enum ExportFormat
     Html,
     Docx,
     Xlsx,
+    Png,
+    Jpg,
+    Svg,
 }

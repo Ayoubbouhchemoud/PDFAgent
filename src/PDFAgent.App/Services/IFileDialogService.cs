@@ -53,6 +53,15 @@ public interface IFileDialogService
     /// <summary>Shows a save dialog for an Excel .xlsx file.</summary>
     string? SaveXlsxFile(string defaultName);
 
+    /// <summary>Shows a save dialog for a PNG image file.</summary>
+    string? SavePngFile(string defaultName);
+
+    /// <summary>Shows a save dialog for a JPEG image file.</summary>
+    string? SaveJpgFile(string defaultName);
+
+    /// <summary>Shows a save dialog for a ZIP archive (multi-page image exports).</summary>
+    string? SaveZipFile(string defaultName);
+
     /// <summary>Shows the Secure PDF password dialog. Returns null if cancelled.</summary>
     SecurePdfDialogResult? ShowSecurePdfDialog();
 }

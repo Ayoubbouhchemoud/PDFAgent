@@ -34,7 +34,9 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         ExportFormat format,
         CancellationToken ct = default)
     {
-        if (format != ExportFormat.Html && format != ExportFormat.Docx && format != ExportFormat.Xlsx)
+        if (format != ExportFormat.Html  && format != ExportFormat.Docx &&
+            format != ExportFormat.Xlsx  &&
+            format != ExportFormat.Png   && format != ExportFormat.Jpg  && format != ExportFormat.Svg)
             return Task.FromResult(
                 OperationResult.Fail($"Format '{format}' is not yet implemented."));
 
@@ -44,11 +46,20 @@ public sealed class PdfToHtmlConverter : IPdfExporter
     private OperationResult RunPython(string inputPath, string outputPath,
         ExportFormat format, CancellationToken ct)
     {
+        bool isImage = format is ExportFormat.Png or ExportFormat.Jpg or ExportFormat.Svg;
         string scriptName = format switch
         {
             ExportFormat.Docx => "pdf_to_docx.py",
             ExportFormat.Xlsx => "pdf_to_xlsx.py",
+            ExportFormat.Png or ExportFormat.Jpg or ExportFormat.Svg => "pdf_to_image.py",
             _                 => "pdf_to_html.py",
+        };
+        string imgFmt = format switch
+        {
+            ExportFormat.Png => "png",
+            ExportFormat.Jpg => "jpg",
+            ExportFormat.Svg => "svg",
+            _                => "",
         };
         string scriptPath = Path.Combine(AppContext.BaseDirectory, scriptName);
         if (!File.Exists(scriptPath))
@@ -66,10 +77,13 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         {
             try
             {
+                string args = isImage
+                    ? $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\" \"{imgFmt}\""
+                    : $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"";
                 var psi = new ProcessStartInfo
                 {
                     FileName               = exe,
-                    Arguments              = $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"",
+                    Arguments              = args,
                     CreateNoWindow         = true,
                     UseShellExecute        = false,
                     RedirectStandardOutput = true,
@@ -102,6 +116,9 @@ public sealed class PdfToHtmlConverter : IPdfExporter
                     {
                         ExportFormat.Docx => "DOCX",
                         ExportFormat.Xlsx => "XLSX",
+                        ExportFormat.Png  => "PNG",
+                        ExportFormat.Jpg  => "JPEG",
+                        ExportFormat.Svg  => "SVG",
                         _                 => "HTML",
                     };
                     _logger.LogInformation("{Label} export complete: {Path}", label, outputPath);
@@ -133,7 +150,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         // Last resort on Windows: run python3 inside WSL (if installed).
         if (OperatingSystem.IsWindows())
         {
-            var wslResult = TryWsl(scriptPath, inputPath, outputPath, ct);
+            var wslResult = TryWsl(scriptPath, inputPath, outputPath, isImage, imgFmt, ct);
             if (wslResult is not null) return wslResult;
         }
 
@@ -141,6 +158,7 @@ public sealed class PdfToHtmlConverter : IPdfExporter
         {
             ExportFormat.Docx => "pip install pdfplumber python-docx",
             ExportFormat.Xlsx => "pip install pdfplumber openpyxl",
+            ExportFormat.Png or ExportFormat.Jpg or ExportFormat.Svg => "pip install pymupdf",
             _                 => "pip install pdfplumber",
         };
         return OperationResult.Fail(
@@ -150,14 +168,18 @@ public sealed class PdfToHtmlConverter : IPdfExporter
     }
 
     private OperationResult? TryWsl(
-        string scriptPath, string inputPath, string outputPath, CancellationToken ct)
+        string scriptPath, string inputPath, string outputPath,
+        bool isImage, string imgFmt, CancellationToken ct)
     {
         try
         {
+            string wslArgs = isImage
+                ? $"python3 \"{ToWslPath(scriptPath)}\" \"{ToWslPath(inputPath)}\" \"{ToWslPath(outputPath)}\" \"{imgFmt}\""
+                : $"python3 \"{ToWslPath(scriptPath)}\" \"{ToWslPath(inputPath)}\" \"{ToWslPath(outputPath)}\"";
             var psi = new ProcessStartInfo
             {
                 FileName               = "wsl",
-                Arguments              = $"python3 \"{ToWslPath(scriptPath)}\" \"{ToWslPath(inputPath)}\" \"{ToWslPath(outputPath)}\"",
+                Arguments              = wslArgs,
                 CreateNoWindow         = true,
                 UseShellExecute        = false,
                 RedirectStandardOutput = true,

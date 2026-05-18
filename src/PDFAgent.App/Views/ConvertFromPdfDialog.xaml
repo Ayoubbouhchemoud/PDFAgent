@@ -45,13 +45,38 @@
             <RadioButton x:Name="XlsxRadio"
                          Content="Excel (.xlsx) — spreadsheet with tables and code blocks"
                          FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"
+                         Margin="0,0,0,12"/>
+
+            <TextBlock Text="Image formats"
+                       FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                       Margin="0,0,0,6"/>
+            <RadioButton x:Name="PngRadio"
+                         Content="PNG — lossless raster, transparent background"
+                         FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"
+                         Margin="0,0,0,6"/>
+            <RadioButton x:Name="JpgRadio"
+                         Content="JPEG — compressed raster, smaller file size"
+                         FontSize="13"
+                         Foreground="{DynamicResource OnSurfaceBrush}"
+                         Margin="0,0,0,6"/>
+            <RadioButton x:Name="SvgRadio"
+                         Content="SVG — vector graphics, text remains selectable"
+                         FontSize="13"
                          Foreground="{DynamicResource OnSurfaceBrush}"/>
         </StackPanel>
+
+        <TextBlock x:Name="MultiPageHint"
+                   TextWrapping="Wrap" FontSize="12"
+                   Foreground="{DynamicResource OnSurfaceVariantBrush}"
+                   Margin="0,0,0,8"/>
 
         <TextBlock TextWrapping="Wrap" FontSize="12"
                    Foreground="{DynamicResource OnSurfaceVariantBrush}"
                    Margin="0,0,0,20">
-            Requires Python 3 with pdfplumber (HTML), pdfplumber + python-docx (Word), or pdfplumber + openpyxl (Excel).
+            Requires Python 3 · pdfplumber (HTML/Word/Excel) · openpyxl (Excel) · pymupdf (PNG/JPEG/SVG)
         </TextBlock>
 
         <Separator Background="{DynamicResource OutlineVariantBrush}" Margin="0,0,0,16"/>

@@ -877,10 +877,17 @@ public sealed partial class MainViewModel : ObservableObject
         var baseName = Path.GetFileNameWithoutExtension(DocumentInfo.FileName);
 
         // Collect the save path before entering IsBusy — dialogs need the window interactive.
+        bool multiPage = TotalPages > 1;
         var outputPath = format switch
         {
             ExportFormat.Docx => _fileDialog.SaveDocxFile($"{baseName}.docx"),
             ExportFormat.Xlsx => _fileDialog.SaveXlsxFile($"{baseName}.xlsx"),
+            ExportFormat.Png  => multiPage ? _fileDialog.SaveZipFile($"{baseName}_pages.zip")
+                                           : _fileDialog.SavePngFile($"{baseName}.png"),
+            ExportFormat.Jpg  => multiPage ? _fileDialog.SaveZipFile($"{baseName}_pages.zip")
+                                           : _fileDialog.SaveJpgFile($"{baseName}.jpg"),
+            ExportFormat.Svg  => multiPage ? _fileDialog.SaveZipFile($"{baseName}_pages.zip")
+                                           : _fileDialog.SaveSvgFile($"{baseName}.svg"),
             _                 => _fileDialog.SaveHtmlFile($"{baseName}.html"),
         };
         if (outputPath == null) return;
@@ -892,6 +899,9 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 ExportFormat.Docx => "Word document",
                 ExportFormat.Xlsx => "Excel workbook",
+                ExportFormat.Png  => multiPage ? "PNG images (ZIP)" : "PNG image",
+                ExportFormat.Jpg  => multiPage ? "JPEG images (ZIP)" : "JPEG image",
+                ExportFormat.Svg  => multiPage ? "SVG images (ZIP)" : "SVG image",
                 _                 => "HTML",
             };
             StatusText = $"Exporting as {label}…";

@@ -225,6 +225,36 @@ public sealed class FileDialogService : IFileDialogService
         return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
     }
 
+    public string? SavePngFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PNG image (*.png)|*.png|All files (*.*)|*.*",
+            Title = "Save PNG image as…", FileName = defaultName, DefaultExt = ".png",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SaveJpgFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "JPEG image (*.jpg)|*.jpg|All files (*.*)|*.*",
+            Title = "Save JPEG image as…", FileName = defaultName, DefaultExt = ".jpg",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
+    public string? SaveZipFile(string defaultName)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "ZIP archive (*.zip)|*.zip|All files (*.*)|*.*",
+            Title = "Save pages as ZIP…", FileName = defaultName, DefaultExt = ".zip",
+        };
+        return dialog.ShowDialog(Owner) == true ? dialog.FileName : null;
+    }
+
     public SecurePdfDialogResult? ShowSecurePdfDialog()
     {
         var dialog = new Views.SecurePdfDialog { Owner = Application.Current.MainWindow };
